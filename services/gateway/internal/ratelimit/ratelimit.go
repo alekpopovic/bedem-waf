@@ -111,7 +111,10 @@ func (l *FixedWindowLimiter) Check(ctx context.Context, app *policy.App, req Req
 	}
 	if count <= int64(rule.Limit) {
 		return decision.Decision{
-			Action: decision.ActionAllow,
+			Action:          decision.ActionAllow,
+			MatchedRuleName: rule.Name,
+			RuleGroup:       "rate_limit",
+			Tags:            []string{"rate_limit"},
 			RateLimit: &decision.RateLimitInfo{
 				Limit:     rule.Limit,
 				Remaining: remaining,
@@ -130,10 +133,13 @@ func rateLimitDecision(rule policy.RateLimitRule, remaining int, resetAt time.Ti
 		action = decision.ActionRateLimit
 	}
 	return decision.Decision{
-		Action:        action,
-		Reason:        "rate_limit",
-		MatchedRuleID: "rate_limit:" + rule.ID,
-		StatusCode:    rule.StatusCode,
+		Action:          action,
+		Reason:          "rate_limit",
+		MatchedRuleID:   "rate_limit:" + rule.ID,
+		MatchedRuleName: rule.Name,
+		RuleGroup:       "rate_limit",
+		Tags:            []string{"rate_limit"},
+		StatusCode:      rule.StatusCode,
 		RateLimit: &decision.RateLimitInfo{
 			Limit:     rule.Limit,
 			Remaining: remaining,

@@ -59,12 +59,17 @@ func main() {
 		logger.Error("build_waf_failed", "error", err)
 		os.Exit(1)
 	}
+	auditDispatcher, err := audit.NewDispatcher(1024, logger, audit.NewJSONStdoutSink(os.Stdout))
+	if err != nil {
+		logger.Error("build_audit_dispatcher_failed", "error", err)
+		os.Exit(1)
+	}
 
 	handler, err := proxy.NewGateway(proxy.Options{
 		Config:      cfg,
 		Policies:    store,
 		RateLimiter: limiter,
-		Auditor:     audit.NewJSONLogger(os.Stdout),
+		Auditor:     auditDispatcher,
 		WAF:         wafEngine,
 		Logger:      logger,
 	})
@@ -95,6 +100,10 @@ func main() {
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("gateway_shutdown_failed", "error", err)
+		os.Exit(1)
+	}
+	if err := auditDispatcher.Shutdown(shutdownCtx); err != nil {
+		logger.Error("audit_dispatcher_shutdown_failed", "error", err)
 		os.Exit(1)
 	}
 	logger.Info("gateway_stopped")

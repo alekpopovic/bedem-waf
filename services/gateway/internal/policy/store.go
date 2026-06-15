@@ -196,14 +196,25 @@ func (a *App) EvaluateCustomRules(ctx RequestContext) decision.Decision {
 		}
 		switch rule.Action {
 		case decision.ActionBlock:
-			return decision.WithStatus(decision.Block("custom_rule", rule.ID), rule.StatusCode)
+			got := decision.WithStatus(decision.Block("custom_rule", rule.ID), rule.StatusCode)
+			got.MatchedRuleName = rule.Name
+			got.RuleGroup = "custom"
+			got.Tags = []string{"custom_rule"}
+			return got
 		case decision.ActionCount:
 			if firstCount.Action == "" {
 				firstCount = decision.Count("custom_rule", rule.ID)
+				firstCount.MatchedRuleName = rule.Name
+				firstCount.RuleGroup = "custom"
+				firstCount.Tags = []string{"custom_rule"}
 			}
 		case decision.ActionAllow:
 			if rule.TerminalAllow {
-				return decision.AllowRule("custom_rule_allow", rule.ID)
+				got := decision.AllowRule("custom_rule_allow", rule.ID)
+				got.MatchedRuleName = rule.Name
+				got.RuleGroup = "custom"
+				got.Tags = []string{"custom_rule", "terminal_allow"}
+				return got
 			}
 		}
 	}

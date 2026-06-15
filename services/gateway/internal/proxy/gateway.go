@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/audit"
+	"github.com/bedemwaf/bedemwaf/services/gateway/internal/audit/redaction"
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/config"
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/decision"
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/policy"
@@ -84,14 +85,16 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	clientIP := g.clientIP(r)
 	host := policy.NormalizeHost(r.Host)
 	event := audit.Event{
-		Timestamp: time.Now().UTC(),
-		RequestID: requestID,
-		Host:      host,
-		ClientIP:  clientIP.String(),
-		Method:    r.Method,
-		Path:      r.URL.Path,
-		Action:    string(decision.ActionAllow),
-		UserAgent: r.UserAgent(),
+		Timestamp:     time.Now().UTC(),
+		RequestID:     requestID,
+		Host:          host,
+		ClientIP:      clientIP.String(),
+		Country:       "ZZ",
+		Method:        r.Method,
+		Path:          r.URL.Path,
+		QueryRedacted: redaction.Query(r.URL.RawQuery),
+		Action:        string(decision.ActionAllow),
+		UserAgent:     r.UserAgent(),
 	}
 	defer func() {
 		event.Status = recorder.status
@@ -108,6 +111,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(recorder, http.StatusNotFound, requestID, "no matching app")
 		return
 	}
+	event.TenantID = app.TenantID
 	event.AppID = app.ID
 	event.Mode = string(app.Mode)
 
@@ -190,6 +194,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	event.Action = string(enforced)
 	event.Reason = final.Reason
 	event.MatchedRuleID = final.MatchedRuleID
+	event.MatchedRuleName = final.MatchedRuleName
+	event.RuleGroup = final.RuleGroup
+	event.Tags = final.Tags
+	event.AnomalyScore = final.AnomalyScore
 	if final.RateLimit != nil {
 		event.RateLimit = &audit.RateLimit{
 			Limit:     final.RateLimit.Limit,
@@ -212,11 +220,18 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Set("X-BedemWAF-Request-ID", requestID)
 	r.Header.Set("X-Forwarded-Host", r.Host)
 	r.Header.Set("X-Forwarded-Proto", schemeForRequest(r))
+	originStart := time.Now()
 	proxy := httputil.NewSingleHostReverseProxy(app.Origin)
 	if g.transport != nil {
 		proxy.Transport = g.transport
 	}
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		event.OriginStatus = resp.StatusCode
+		event.OriginLatencyMS = time.Since(originStart).Milliseconds()
+		return nil
+	}
 	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
+		event.OriginLatencyMS = time.Since(originStart).Milliseconds()
 		g.logger.Warn("origin_proxy_failed", "error", err, "app_id", app.ID, "request_id", requestID)
 		writeJSONError(rw, http.StatusBadGateway, requestID, "origin unavailable")
 	}

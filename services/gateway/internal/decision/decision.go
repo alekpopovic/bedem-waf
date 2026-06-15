@@ -20,11 +20,15 @@ const (
 )
 
 type Decision struct {
-	Action        Action
-	Reason        string
-	MatchedRuleID string
-	StatusCode    int
-	RateLimit     *RateLimitInfo
+	Action          Action
+	Reason          string
+	MatchedRuleID   string
+	MatchedRuleName string
+	RuleGroup       string
+	Tags            []string
+	AnomalyScore    int
+	StatusCode      int
+	RateLimit       *RateLimitInfo
 }
 
 type RateLimitInfo struct {

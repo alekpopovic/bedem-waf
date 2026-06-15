@@ -1,150 +1,222 @@
 # Event Schema
 
-BedemWAF audit events must be structured, redacted, and useful for both
-investigation and analytics. Full sensitive request bodies are not stored by
-default.
+BedemWAF audit events are structured security telemetry emitted by the gateway
+after each request decision. Events are designed for defensive investigation,
+analytics, and future ClickHouse storage without logging sensitive request
+bodies or credential-bearing headers.
 
-## Common Fields
+Gateway audit emission is asynchronous. Request handling enqueues an event into
+a bounded dispatcher and continues; sink writes happen outside the request path.
+If the queue is full, the event is dropped, `events_dropped_total` is incremented,
+and a warning is logged.
 
-- `event_id`: stable unique ID for the audit event
-- `timestamp`: RFC 3339 timestamp
-- `tenant_id`: tenant that owns the protected app
-- `app_id`: protected application ID
-- `request_id`: gateway request ID
-- `source_ip`: client IP as seen by the gateway
-- `http`: normalized request metadata
-- `policy`: policy and mode used for evaluation
-- `matches`: WAF, IP set, and rate-limit matches
-- `decision`: final gateway decision
-- `origin`: upstream target metadata for allowed requests
-- `redaction`: fields removed or masked before storage
+## Pipeline
 
-```mermaid
-flowchart TD
-    event[Audit Event] --> identity[Identity fields]
-    event --> http[HTTP metadata]
-    event --> policy[Policy context]
-    event --> matches[Matches]
-    event --> decision[Decision]
-    event --> origin[Origin result]
-    event --> redaction[Redaction metadata]
-
-    identity --> eventID[event_id]
-    identity --> tenant[tenant_id]
-    identity --> app[app_id]
-    identity --> request[request_id]
-    matches --> waf[WAF rule]
-    matches --> ip[IP set]
-    matches --> rate[Rate limit]
-    decision --> allow[allow]
-    decision --> count[count]
-    decision --> block[block]
+```text
+Request decision
+      |
+      v
++--------------------+
+| audit.Event        |
+| flat JSON schema   |
++--------------------+
+      |
+      v
++---------------------------+
+| Async bounded dispatcher  |
+| non-blocking enqueue      |
++---------------------------+
+      |
+      +------------------> JSON stdout sink
+      |
+      +------------------> ClickHouse sink placeholder
 ```
 
-## Count Event Example
+## Event Fields
+
+The gateway emits one JSON object per line.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `timestamp` | string | UTC RFC3339 timestamp for event creation. |
+| `request_id` | string | Gateway-generated request correlation ID. |
+| `tenant_id` | string | Tenant that owns the matched app. |
+| `app_id` | string | Matched protected app ID. |
+| `policy_id` | string | Policy identifier placeholder for control-plane integration. |
+| `policy_version` | string | Active immutable policy version placeholder. |
+| `host` | string | Normalized request host used for app lookup. |
+| `client_ip` | string | Client IP selected by gateway trusted-proxy rules. |
+| `country` | string | GeoIP country placeholder. MVP uses `ZZ` when unknown. |
+| `method` | string | HTTP method. |
+| `path` | string | URL path without query string. |
+| `query_redacted` | string | Query string after sensitive parameter redaction. |
+| `user_agent` | string | User-Agent header value. |
+| `action` | string | Final action after policy mode: `allow`, `count`, `block`, or `rate_limit`. |
+| `mode` | string | Policy mode: `count` or `block`. |
+| `status` | number | Response status returned to the client. |
+| `reason` | string | Decision reason, for example `ip_blocklist`, `custom_rule`, `waf_match`, or `rate_limit`. |
+| `matched_rule_id` | string | Rule or synthetic rule ID that caused the decision. |
+| `matched_rule_name` | string | Human-readable rule name when available. |
+| `rule_group` | string | Rule source, such as `custom`, `coraza`, or `rate_limit`. |
+| `tags` | string array | Small classification labels for filtering. |
+| `anomaly_score` | number | Placeholder for CRS-style anomaly scoring. |
+| `rate_limit` | object | Rate-limit result when a rate-limit rule was evaluated. |
+| `latency_ms` | number | Gateway request latency in milliseconds. |
+| `origin_status` | number | Upstream origin status for proxied requests. |
+| `origin_latency_ms` | number | Time to receive the origin response headers or proxy error. |
+
+## Rate Limit Object
 
 ```json
 {
-  "event_id": "evt_01J00000000000000000000001",
-  "timestamp": "2026-06-15T10:30:00Z",
-  "tenant_id": "ten_demo",
-  "app_id": "app_public_api",
-  "request_id": "req_01J00000000000000000000002",
-  "source_ip": "203.0.113.10",
-  "http": {
-    "method": "POST",
-    "host": "api.example.com",
-    "path": "/login",
-    "query_redacted": true,
-    "user_agent": "ExampleClient/1.0",
-    "status": 200
-  },
-  "policy": {
-    "policy_id": "pol_login_protection",
-    "mode": "count"
-  },
-  "matches": [
-    {
-      "type": "waf_rule",
-      "rule_group_id": "crs_owasp",
-      "rule_id": "942100",
-      "severity": "critical",
-      "message": "SQL injection pattern detected"
-    }
-  ],
-  "decision": {
-    "action": "count",
-    "blocked": false
-  },
-  "origin": {
-    "origin_id": "org_nginx_primary",
-    "status": 200
-  },
-  "redaction": {
-    "headers": ["authorization", "cookie"],
-    "body_stored": false
-  }
+  "limit": 100,
+  "remaining": 0,
+  "reset_at": "2026-06-16T12:01:00Z",
+  "rule_id": "rl-global-ip",
+  "action": "block"
 }
 ```
 
-## Block Event Example
+## Example Allow Event
 
 ```json
 {
-  "event_id": "evt_01J00000000000000000000003",
-  "timestamp": "2026-06-15T10:31:00Z",
-  "tenant_id": "ten_demo",
-  "app_id": "app_public_api",
-  "request_id": "req_01J00000000000000000000004",
-  "source_ip": "198.51.100.25",
-  "http": {
-    "method": "GET",
-    "host": "api.example.com",
-    "path": "/admin",
-    "query_redacted": true,
-    "user_agent": "ExampleClient/1.0",
-    "status": 403
+  "timestamp": "2026-06-16T12:00:00Z",
+  "request_id": "8f4f2e1b1c0a4d8c9a4d6c5b2a1e0f11",
+  "tenant_id": "tenant-local",
+  "app_id": "app-local",
+  "host": "example.local",
+  "client_ip": "198.51.100.10",
+  "country": "ZZ",
+  "method": "GET",
+  "path": "/api/items",
+  "query_redacted": "page=1",
+  "user_agent": "ExampleClient/1.0",
+  "action": "allow",
+  "mode": "count",
+  "status": 200,
+  "latency_ms": 14,
+  "origin_status": 200,
+  "origin_latency_ms": 8
+}
+```
+
+## Example Count Event
+
+```json
+{
+  "timestamp": "2026-06-16T12:02:00Z",
+  "request_id": "b4b3cb73580845e5aafef4f2e732aa11",
+  "tenant_id": "tenant-local",
+  "app_id": "app-local",
+  "host": "example.local",
+  "client_ip": "203.0.113.10",
+  "country": "ZZ",
+  "method": "GET",
+  "path": "/admin",
+  "query_redacted": "token=%5BREDACTED%5D",
+  "user_agent": "ExampleClient/1.0",
+  "action": "count",
+  "mode": "count",
+  "status": 200,
+  "reason": "custom_rule",
+  "matched_rule_id": "rule-admin-office-only",
+  "matched_rule_name": "Admin only from office IPs",
+  "rule_group": "custom",
+  "tags": ["custom_rule"],
+  "latency_ms": 11,
+  "origin_status": 200,
+  "origin_latency_ms": 6
+}
+```
+
+## Example Rate-Limit Block Event
+
+```json
+{
+  "timestamp": "2026-06-16T12:03:00Z",
+  "request_id": "1043f921ea9b45f7b5f1d16fd924f4d5",
+  "tenant_id": "tenant-local",
+  "app_id": "app-local",
+  "host": "example.local",
+  "client_ip": "198.51.100.25",
+  "country": "ZZ",
+  "method": "POST",
+  "path": "/login",
+  "query_redacted": "",
+  "user_agent": "ExampleClient/1.0",
+  "action": "rate_limit",
+  "mode": "block",
+  "status": 429,
+  "reason": "rate_limit",
+  "matched_rule_id": "rate_limit:rl-login",
+  "matched_rule_name": "Login IP limit",
+  "rule_group": "rate_limit",
+  "tags": ["rate_limit"],
+  "rate_limit": {
+    "limit": 20,
+    "remaining": 0,
+    "reset_at": "2026-06-16T12:04:00Z",
+    "rule_id": "rl-login",
+    "action": "block"
   },
-  "policy": {
-    "policy_id": "pol_admin_protection",
-    "mode": "block"
-  },
-  "matches": [
-    {
-      "type": "ip_set",
-      "ip_set_id": "ips_known_bad_sources",
-      "cidr": "198.51.100.0/24",
-      "message": "Source IP matched blocked range"
-    }
-  ],
-  "decision": {
-    "action": "block",
-    "blocked": true,
-    "reason": "ip_set_match"
-  },
-  "origin": null,
-  "redaction": {
-    "headers": ["authorization", "cookie", "x-api-key"],
-    "body_stored": false
-  }
+  "latency_ms": 2
 }
 ```
 
 ## Redaction Rules
 
-Default redaction should include:
+BedemWAF must not log full sensitive request bodies by default.
 
-- `authorization`
-- `cookie`
-- `set-cookie`
-- `x-api-key`
-- access tokens in query parameters
-- password-like fields
-- full request bodies
+Headers:
 
-TODO:
+- `Authorization` is never logged.
+- `Cookie` is never logged.
+- Header redaction helpers are centralized in the gateway audit package for
+  future sinks that need header metadata.
 
-- Define ClickHouse table schema
-- Define event versioning
-- Define sampling strategy for high-volume count events
-- Define retention defaults
+Query parameters with these names are replaced with `[REDACTED]`:
+
+- `password`
+- `pass`
+- `token`
+- `access_token`
+- `refresh_token`
+- `secret`
+- `api_key`
+- `key`
+- `code`
+
+Example:
+
+```text
+before: username=demo&password=hunter2&token=abc&page=1
+after:  page=1&password=%5BREDACTED%5D&token=%5BREDACTED%5D&username=demo
+```
+
+## Metrics Placeholders
+
+The gateway audit dispatcher owns counters that will later be exported through
+Prometheus:
+
+- `events_sent_total`
+- `events_dropped_total`
+- `blocked_requests_total`
+- `allowed_requests_total`
+
+## MVP Scope
+
+- JSON stdout sink is implemented.
+- Async bounded dispatcher is implemented.
+- ClickHouse sink exists as a placeholder and does not write data yet.
+- Events are emitted as one JSON object per line.
+- Full request body logging is disabled by default.
+
+## Later Phase
+
+- ClickHouse batch writer with retry/backoff.
+- Event schema version field and compatibility policy.
+- Configurable sampling for high-volume count events.
+- GeoIP enrichment.
+- Origin ID and active policy version from the control plane.
+- Prometheus export for audit metrics.

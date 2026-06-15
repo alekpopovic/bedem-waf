@@ -90,13 +90,19 @@ func (e *Engine) InspectRequest(ctx context.Context, req *http.Request, bodyPrev
 			matchedRuleID = fmt.Sprintf("coraza:%d", match.Rule().ID())
 			if e.ruleEngine == "DetectionOnly" {
 				count := decision.Count("waf_match", matchedRuleID)
+				count.RuleGroup = "coraza"
+				count.Tags = []string{"waf", "coraza"}
 				return &count, nil
 			}
 			block := decision.Block("waf_match", matchedRuleID)
+			block.RuleGroup = "coraza"
+			block.Tags = []string{"waf", "coraza"}
 			return &block, nil
 		}
 	}
 	count := decision.Count("waf_match", matchedRuleID)
+	count.RuleGroup = "coraza"
+	count.Tags = []string{"waf", "coraza"}
 	return &count, nil
 }
 
@@ -115,5 +121,7 @@ func interruptionDecision(interruption *types.Interruption) *decision.Decision {
 		ruleID = fmt.Sprintf("coraza:%d", interruption.RuleID)
 	}
 	block := decision.Block("waf_interruption", ruleID)
+	block.RuleGroup = "coraza"
+	block.Tags = []string{"waf", "coraza"}
 	return &block
 }
