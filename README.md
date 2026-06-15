@@ -146,3 +146,14 @@ Next implementation steps:
 - [Local Development](docs/local-development.md)
 - [Policy Model](docs/policy-model.md)
 - [Event Schema](docs/event-schema.md)
+
+## Docs Site
+
+The GitHub Pages docs site is generated from `README.md` and `docs/*.md`.
+
+```bash
+python3 scripts/build-docs-site.py
+```
+
+The generated site is written to `_site/`. The GitHub Actions workflow in
+`.github/workflows/pages.yml` builds and publishes the site on pushes to `main`.

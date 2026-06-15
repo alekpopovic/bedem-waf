@@ -21,7 +21,12 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+__pycache__/
+*.py[cod]
 
 # Local datastore files
 *.sqlite
 *.db
+
+# Generated docs site
+_site/
