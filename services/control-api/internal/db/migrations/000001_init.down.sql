@@ -1,0 +1,17 @@
+DROP TABLE IF EXISTS audit_event_refs;
+DROP TABLE IF EXISTS policy_deployments;
+ALTER TABLE IF EXISTS policies DROP CONSTRAINT IF EXISTS policies_active_version_fk;
+DROP TABLE IF EXISTS policy_versions;
+DROP TABLE IF EXISTS rate_limit_rules;
+DROP TABLE IF EXISTS ip_set_entries;
+DROP TABLE IF EXISTS ip_sets;
+DROP TABLE IF EXISTS rules;
+DROP TABLE IF EXISTS rule_groups;
+DROP TABLE IF EXISTS policies;
+DROP TABLE IF EXISTS managed_rule_versions;
+DROP TABLE IF EXISTS managed_rule_sets;
+DROP TABLE IF EXISTS origins;
+DROP TABLE IF EXISTS apps;
+DROP TABLE IF EXISTS api_keys;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS tenants;
