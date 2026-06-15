@@ -1,270 +1,285 @@
 # Architecture
 
-BedemWAF is a self-hosted managed WAF platform for HTTP applications that are
-served behind NGINX origins.
+BedemWAF is a self-hosted managed WAF platform that protects HTTP applications
+by placing a Go gateway in front of NGINX origins.
 
 ```text
-Internet
-   |
-   v
-BedemWAF Gateway
-   |
-   v
-NGINX Origin
-   |
-   v
-Application
+Internet -> BedemWAF Gateway -> NGINX Origin -> Application
 ```
 
-## Local Development Topology
+The gateway is the data plane. It makes per-request decisions. The control API,
+dashboard, worker, and databases are the control plane. They manage
+configuration, rules, search, enrichment, and retention.
+
+## System Diagram
 
 ```text
-                     +-------------------+
-                     |    Dashboard      |
-                     |    Next.js UI     |
-                     +---------+---------+
-                               |
-                               v
-                     +-------------------+
-                     |   Control API     |
-                     |   Go REST API     |
-                     +----+---------+----+
-                          |         |
-                          v         v
-                  +----------+   +-------------+
-                  | Postgres |   | ClickHouse  |
-                  | config   |   | events      |
-                  +----------+   +-------------+
+                     Control Plane
 
-Internet/client
-      |
-      v
-+-------------------+       +---------+
-| BedemWAF Gateway  +------>| Redis   |
-| Go reverse proxy  |       | limits  |
-+---------+---------+       +---------+
-          |
-          v
-+-------------------+
-| NGINX Origin      |
-+---------+---------+
-          |
-          v
-+-------------------+
-| Application       |
-+-------------------+
+  +-------------+        +----------------+        +------------+
+  | Dashboard   |------->| Control API    |------->| Postgres   |
+  | Next.js     | HTTPS  | Go REST API    |        | config DB  |
+  +-------------+        +-------+--------+        +------------+
+                                  |
+                                  | event queries
+                                  v
+                            +-------------+
+                            | ClickHouse  |
+                            | event store |
+                            +-------------+
+                                  ^
+                                  |
+                            +-----+------+
+                            | Worker     |
+                            | Go jobs    |
+                            +------------+
+
+                       Data Plane
+
+  +----------+     +-------------------+     +--------------+     +-------------+
+  | Internet |---->| BedemWAF Gateway  |---->| NGINX Origin |---->| Application |
+  +----------+     | Go reverse proxy  |     +--------------+     +-------------+
+                   +----+---------+----+
+                        |         |
+                        |         +-----------> async audit event
+                        v
+                   +---------+
+                   | Redis   |
+                   | limits  |
+                   +---------+
 ```
 
-## Runtime Decision Flow
+```mermaid
+flowchart LR
+    internet[Internet] --> gateway[BedemWAF Gateway]
+    gateway --> origin[NGINX Origin]
+    origin --> app[Application]
 
-```text
-Request
-  |
-  v
-Load app/origin/policy config
-  |
-  v
-Normalize request metadata
-  |
-  +--> IP set checks
-  |
-  +--> Rate-limit checks
-  |
-  +--> Coraza / OWASP CRS inspection
-  |
-  v
-Policy decision: allow, count, or block
-  |
-  +--> Emit redacted audit event asynchronously
-  |
-  +--> Forward allowed requests to NGINX origin
-  |
-  +--> Return defensive block response for blocked requests
+    dashboard[Dashboard] --> api[Control API]
+    api --> postgres[(Postgres)]
+    api --> clickhouse[(ClickHouse)]
+    worker[Worker] --> clickhouse
+    worker --> postgres
+    gateway --> redis[(Redis)]
+    gateway -. audit events .-> clickhouse
+    api -. policy snapshots .-> gateway
 ```
 
-## Design Goals
-
-- Provide a managed WAF experience without requiring a hosted edge provider
-- Keep the enforcement path small, observable, and safe by default
-- Support count mode before block mode for lower-risk policy rollout
-- Avoid storing full sensitive request bodies by default
-- Keep data plane services isolated from control plane services
-- Make local development reproducible with Docker Compose
-
-## Component Responsibilities
+## Service Responsibilities
 
 ### Gateway
 
-Language: Go
+The gateway receives public HTTP traffic and is responsible for enforcement.
 
-Responsibilities:
+MVP responsibilities:
 
-- Accept inbound HTTP traffic
-- Resolve the target origin from app and routing configuration
-- Proxy traffic to NGINX origins
-- Inspect requests and responses where configured
-- Use Coraza with OWASP CRS-compatible rules
-- Enforce policy decisions in count or block mode
-- Apply rate limiting using Redis-backed counters
-- Emit structured audit events asynchronously
+- Accept HTTP requests on configured listeners
+- Provide a TLS termination placeholder in configuration and interfaces
+- Assign a `request_id`
+- Resolve the protected app by the HTTP `Host` header
+- Load the active policy from an in-memory policy cache
+- Evaluate IP allow/block sets
+- Evaluate Redis-backed rate limits
+- Run WAF inspection through Coraza and OWASP CRS-compatible rules
+- Evaluate simple custom defensive rules
+- Apply policy mode: `count` or `block`
+- Reverse proxy allowed requests to the configured NGINX origin
+- Emit redacted structured audit events asynchronously
 
-Security notes:
+Later-phase responsibilities:
 
-- Request body handling must use explicit size limits
-- Sensitive headers and fields must be redacted before event storage
-- Policy failures should default to safe, observable behavior
-- Origin lock-down documentation must describe how to restrict origin ingress to
-  BedemWAF gateway addresses
-
-TODO:
-
-- Define gateway configuration format
-- Add Coraza integration spike
-- Define audit event schema
-- Define rate-limit key strategy
+- Real TLS certificate management
+- Hot configuration streaming from the control plane
+- Multi-origin load balancing and active health checks
+- Response inspection where explicitly enabled
+- Advanced bot and anomaly scoring controls
 
 ### Control API
 
-Language: Go
+The control API is the management source of truth.
 
-Responsibilities:
+MVP responsibilities:
 
-- Expose REST APIs for management operations
-- Store tenant, app, origin, policy, rule group, IP set, rate limit, and user
-  configuration in Postgres
-- Expose event query APIs backed by ClickHouse
-- Provide OpenAPI documentation
-- Validate all user input
-- Return production-ready error responses
+- Manage tenants, apps, origins, policies, rule groups, custom rules, IP sets,
+  rate limits, and API keys
+- Store configuration in Postgres
+- Expose event search APIs backed by ClickHouse
+- Validate all inputs
+- Provide stable REST resources and OpenAPI documentation
+- Publish or expose policy snapshots for gateways
 
-TODO:
+Later-phase responsibilities:
 
-- Choose Go HTTP router and validation libraries
-- Define initial REST resource model
-- Add database migration tooling
-- Add OpenAPI generation workflow
+- Role-based access control
+- Audit logs for administrative changes
+- Policy versioning, staged rollout, and rollback
+- Signed gateway configuration bundles
 
 ### Dashboard
 
-Language: TypeScript
+The dashboard is a Next.js administrative UI.
 
-Framework: Next.js
+MVP responsibilities:
 
-Responsibilities:
-
+- Authenticate operators before exposing configuration
 - Manage apps, origins, policies, rule groups, IP sets, and rate limits
-- Display WAF events and analytics
-- Support safe policy rollout workflows
-- Use secure browser headers and avoid leaking secrets to the client
+- Search and filter security events
+- Make count-to-block rollout workflows clear
 
-TODO:
+Later-phase responsibilities:
 
-- Scaffold Next.js application
-- Define API client generation strategy from OpenAPI
-- Add authentication and session model
-- Add dashboard information architecture
+- Analytics dashboards
+- Rule recommendation workflows
+- Incident response views
+- Multi-tenant role management
 
 ### Worker
 
-Language: Go
+The worker handles asynchronous control-plane and analytics jobs.
 
-Responsibilities:
+MVP responsibilities:
 
-- Process asynchronous jobs
 - Enrich audit events
-- Run rule update jobs
-- Run retention cleanup
-- Support future scheduled maintenance work
+- Run event retention cleanup
+- Prepare rule update jobs
+- Maintain derived analytics tables if needed
 
-TODO:
+Later-phase responsibilities:
 
-- Choose job queue approach
-- Define rule update source and verification process
-- Define retention policies for Postgres and ClickHouse data
-
-## Data Stores
+- Managed rule distribution
+- External threat intelligence imports
+- Scheduled policy reports
 
 ### Postgres
 
-Source of truth for control-plane configuration:
+Postgres stores durable control-plane configuration:
 
 - Tenants
-- Users and access control
-- Applications
+- Users and API keys
+- Apps and hostnames
 - Origins
 - Policies
-- Rule groups
+- Rule groups and custom rules
 - IP sets
 - Rate-limit definitions
 
 ### Redis
 
-Low-latency operational state:
+Redis stores low-latency operational state:
 
 - Rate-limit counters
-- Short-lived coordination locks
-- Async queue metadata if selected by future worker design
+- Short-lived locks
+- Optional event queue metadata
+
+Redis must not be treated as the durable source of policy configuration.
 
 ### ClickHouse
 
-High-volume analytics and event storage:
+ClickHouse stores high-volume security and analytics events:
 
 - WAF audit events
-- Policy match events
-- Rate-limit events
-- Aggregated analytics
+- IP set matches
+- Rate-limit matches
+- Block/count/allow decisions
+- Aggregated dashboards
 
-## Audit Events
+## Configuration Flow
 
-Audit events should be structured, redacted, and safe to store by default.
+```text
+Operator
+  |
+  v
+Dashboard or API client
+  |
+  v
+Control API validates request
+  |
+  v
+Postgres stores canonical config
+  |
+  v
+Gateway loads policy snapshot
+  |
+  v
+Gateway updates in-memory policy cache
+```
 
-Minimum fields to consider:
+The MVP can use polling from the gateway to the control API. Later phases can add
+signed snapshots, push-based configuration, and explicit config revisions.
 
-- Tenant ID
-- App ID
-- Request ID
-- Timestamp
-- Source IP
-- HTTP method
-- Host
-- Path
-- Matched policy and rule identifiers
-- Action: `count`, `block`, or `allow`
-- Response status
-- Redaction metadata
+## Request Decision Flow
 
-TODO:
+```text
+request received
+  |
+  v
+assign request_id
+  |
+  v
+lookup app by Host
+  |
+  v
+load active policy from cache
+  |
+  v
+IP sets -> rate limits -> WAF engine -> custom rules
+  |
+  v
+decision: allow, count, or block
+  |
+  +--> emit redacted audit event
+  |
+  +--> proxy to NGINX origin or return block response
+```
 
-- Define final event schema
-- Define redaction rules
-- Define body sampling policy, disabled by default
+Full details are in [Request Flow](request-flow.md).
 
-## Control Flow
+## Safe Defaults
 
-1. An operator configures tenants, apps, origins, and policies through the
-   dashboard or control API.
-2. The control API stores configuration in Postgres.
-3. The gateway loads or receives configuration snapshots.
-4. Incoming traffic reaches the gateway.
-5. The gateway applies WAF inspection, IP logic, and rate limits.
-6. In count mode, matches are logged but requests continue.
-7. In block mode, matching requests receive a defensive block response.
-8. The gateway forwards allowed requests to the NGINX origin.
-9. Audit events are emitted asynchronously for enrichment and analytics.
+- New policies default to `count` mode
+- Request body inspection uses explicit size limits
+- Full body logging is disabled by default
+- Sensitive fields are redacted before event storage
+- Dashboard must be behind authentication
+- API keys are scoped and stored hashed
+- Unknown hosts are rejected rather than proxied to a default origin
+- Direct origin exposure is treated as a deployment error
 
-## Non-Goals
+## Failure Modes
 
-- L3/L4 DDoS mitigation
-- CDN caching or global edge routing
-- Offensive scanning
-- Exploit tooling
-- Default storage of full sensitive request bodies
+- Redis unavailable: rate-limit checks should fail according to policy
+  configuration. MVP default is fail-open with an audit warning to avoid
+  accidental outage, except for explicitly fail-closed critical limits.
+- Policy cache stale: gateway continues using the last valid policy snapshot and
+  emits stale-cache health metrics/events.
+- Origin unavailable: gateway returns `502 Bad Gateway` or `504 Gateway Timeout`
+  and logs an origin failure event.
+- ClickHouse unavailable: gateway must not block request handling solely because
+  event storage is down. Events should be queued best-effort with bounded memory.
+- Control API unavailable: gateway continues using cached policies. Dashboard and
+  management clients receive API errors until recovery.
 
-## Future Work
+## MVP Scope
 
-- Prometheus metrics
-- Grafana dashboards
-- mTLS or signed configuration distribution
-- Multi-gateway deployment examples
-- Kubernetes manifests or Helm charts
-- Origin lock-down examples for common cloud environments
+- Single gateway process
+- HTTP reverse proxy to NGINX origins
+- Host-based app lookup
+- In-memory policy cache
+- Coraza/CRS-compatible WAF inspection
+- Basic custom rules
+- IP sets
+- Redis-backed rate limits
+- Redacted audit events
+- Postgres-backed configuration
+- ClickHouse event search
+
+## Later-Phase Scope
+
+- Automated TLS certificate lifecycle
+- Push-based gateway config distribution
+- Multi-region deployment
+- Gateway autoscaling guidance
+- Advanced analytics and alerting
+- RBAC and SSO
+- Managed rule update service
+- Kubernetes and Helm deployment artifacts

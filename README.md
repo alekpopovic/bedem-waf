@@ -138,6 +138,10 @@ Next implementation steps:
 ## Documentation
 
 - [Architecture](docs/architecture.md)
+- [Data Plane](docs/data-plane.md)
+- [Control Plane](docs/control-plane.md)
+- [Request Flow](docs/request-flow.md)
+- [Deployment Model](docs/deployment-model.md)
 - [Threat Model](docs/threat-model.md)
 - [Local Development](docs/local-development.md)
 - [Policy Model](docs/policy-model.md)

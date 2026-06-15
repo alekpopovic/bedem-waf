@@ -38,6 +38,23 @@ Dashboard / Control API
 Postgres / ClickHouse / Redis
 ```
 
+```mermaid
+flowchart TD
+    internet[Untrusted Internet] --> gateway[BedemWAF Gateway]
+    gateway --> origin[NGINX Origin]
+    origin --> app[Application]
+
+    operator[Operators] --> dashboard[Dashboard]
+    dashboard --> api[Control API]
+    api --> postgres[(Postgres)]
+    api --> clickhouse[(ClickHouse)]
+    gateway --> redis[(Redis)]
+
+    internet -. attempted bypass .-> origin
+    internet -. abusive traffic .-> gateway
+    api -. config snapshots .-> gateway
+```
+
 ## In-Scope Threats
 
 - Common HTTP attacks covered by OWASP CRS-compatible rules

@@ -19,6 +19,28 @@ default.
 - `origin`: upstream target metadata for allowed requests
 - `redaction`: fields removed or masked before storage
 
+```mermaid
+flowchart TD
+    event[Audit Event] --> identity[Identity fields]
+    event --> http[HTTP metadata]
+    event --> policy[Policy context]
+    event --> matches[Matches]
+    event --> decision[Decision]
+    event --> origin[Origin result]
+    event --> redaction[Redaction metadata]
+
+    identity --> eventID[event_id]
+    identity --> tenant[tenant_id]
+    identity --> app[app_id]
+    identity --> request[request_id]
+    matches --> waf[WAF rule]
+    matches --> ip[IP set]
+    matches --> rate[Rate limit]
+    decision --> allow[allow]
+    decision --> count[count]
+    decision --> block[block]
+```
+
 ## Count Event Example
 
 ```json

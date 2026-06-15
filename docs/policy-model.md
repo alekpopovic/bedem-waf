@@ -1,29 +1,71 @@
 # Policy Model
 
-BedemWAF models WAF configuration as tenant-owned applications protected by
-policies. Policies combine origins, rule groups, IP sets, rate limits, and
-rollout mode.
+BedemWAF models configuration as tenant-owned resources. A request is mapped to
+an app by hostname, the app points to an active policy, and the policy references
+origins, rule groups, custom rules, IP sets, and rate limits.
+
+## Entity Relationship Diagram
+
+```text
+Tenant
+  |
+  +--> User
+  +--> API Key
+  +--> App
+        |
+        +--> Hostname
+        +--> Origin
+        +--> Policy
+              |
+              +--> Rule Group
+              |     |
+              |     +--> Managed Rule
+              |     +--> Custom Rule
+              |
+              +--> IP Set
+              +--> Rate Limit
+```
+
+```mermaid
+erDiagram
+    TENANT ||--o{ USER : owns
+    TENANT ||--o{ API_KEY : owns
+    TENANT ||--o{ APP : owns
+    APP ||--o{ HOSTNAME : routes
+    APP ||--o{ ORIGIN : forwards_to
+    APP ||--o{ POLICY : protects
+    POLICY ||--o{ RULE_GROUP : includes
+    POLICY ||--o{ CUSTOM_RULE : includes
+    POLICY ||--o{ IP_SET : includes
+    POLICY ||--o{ RATE_LIMIT : includes
+    RULE_GROUP ||--o{ MANAGED_RULE : contains
+```
 
 ## Tenant
 
-A tenant is an administrative boundary.
+A tenant is the top-level administrative boundary. All mutable resources belong
+to exactly one tenant.
 
-Fields to define:
+Suggested fields:
 
 - `id`
 - `name`
-- `status`
+- `status`: `active`, `suspended`, or `deleted`
 - `created_at`
 - `updated_at`
 
-Tenant-owned resources include apps, origins, policies, rule groups, IP sets,
-rate limits, users, and audit events.
+Implementation notes:
+
+- Every control API query must include tenant scoping.
+- Cross-tenant access should be impossible at the database and service layer.
+- Event search must filter by tenant before applying user-provided filters.
 
 ## App
 
-An app represents a protected HTTP property, such as `api.example.com`.
+An app represents a protected HTTP property, usually one or more hostnames that
+route through BedemWAF.
 
-Fields to define:
+Suggested fields:
 
 - `id`
 - `tenant_id`
@@ -31,35 +73,47 @@ Fields to define:
 - `hostnames`
 - `default_origin_id`
 - `active_policy_id`
+- `created_at`
+- `updated_at`
+
+Rules:
+
+- Hostnames must be unique across active apps unless explicit multi-tenant
+  routing rules are added later.
+- Unknown hosts must not proxy to a fallback origin.
+- Apps should start with a default `count` mode policy.
 
 ## Origin
 
-An origin is the upstream NGINX endpoint that receives allowed traffic from the
-gateway.
+An origin is the upstream NGINX endpoint for allowed traffic.
 
-Fields to define:
+Suggested fields:
 
 - `id`
 - `tenant_id`
 - `app_id`
 - `name`
-- `scheme`
+- `scheme`: `http` or `https`
 - `host`
 - `port`
 - `health_check_path`
 - `tls_server_name`
+- `connect_timeout_ms`
+- `read_timeout_ms`
 
-Origin security requirements:
+Implementation notes:
 
-- Operators should lock down origin ingress to BedemWAF gateway addresses
-- Gateway should set and preserve explicit forwarding headers
-- Direct-to-origin traffic should be considered a deployment misconfiguration
+- MVP supports one default origin per app.
+- Later phases can add weighted origins, failover, active health checks, and
+  per-path routing.
+- Operators should configure NGINX or network controls so only BedemWAF gateways
+  can reach the origin.
 
 ## Policy
 
-A policy defines how BedemWAF evaluates traffic for an app.
+A policy is the ordered decision configuration for an app.
 
-Fields to define:
+Suggested fields:
 
 - `id`
 - `tenant_id`
@@ -67,102 +121,188 @@ Fields to define:
 - `name`
 - `mode`: `count` or `block`
 - `rule_group_ids`
+- `custom_rule_ids`
 - `ip_set_ids`
 - `rate_limit_ids`
 - `enabled`
+- `revision`
+- `created_at`
+- `updated_at`
 
 Mode behavior:
 
-- `count` records matching decisions but allows the request
-- `block` enforces blocking decisions when rules match
+- `count`: record matching rules and intended action, then allow the request.
+- `block`: enforce blocking matches unless an allow rule explicitly overrides
+  them.
+
+MVP requirements:
+
+- New policies default to `count`.
+- A policy revision should be included in gateway snapshots and audit events.
+- Disabled policies should never be selected as active policies.
+
+Later-phase requirements:
+
+- Draft policies
+- Staged rollout
+- Rollback to prior revisions
+- Per-rule override actions
 
 ## Rule Group
 
-A rule group is an ordered collection of rules. BedemWAF will support managed
-OWASP CRS-compatible groups and future custom defensive rules.
+A rule group is an ordered set of managed or custom defensive rules.
 
-Fields to define:
+Suggested fields:
 
 - `id`
 - `tenant_id`
 - `name`
-- `source`: `managed` or `custom`
+- `source`: `managed`, `custom`, or `imported`
 - `version`
-- `rules`
 - `enabled`
+- `rule_ids`
 
-## Rule
+MVP:
 
-A rule is a single match or inspection unit.
+- Support managed OWASP CRS-compatible rule groups executed by Coraza.
+- Store metadata in Postgres and load rule files from trusted local paths or
+  bundled images.
 
-Fields to define:
+Later phase:
+
+- Signed managed rule updates
+- Tenant-level rule exclusions
+- Per-app anomaly score thresholds
+
+## Custom Rule
+
+A custom rule is a simple defensive predicate controlled by the operator.
+
+Suggested fields:
 
 - `id`
-- `rule_group_id`
+- `tenant_id`
 - `name`
 - `description`
-- `severity`
-- `action`: `count`, `block`, or `allow`
 - `enabled`
+- `priority`
+- `match_target`: `path`, `method`, `header`, `query`, or `source_ip`
+- `operator`: `equals`, `prefix`, `contains`, `regex`, or `cidr_contains`
+- `value`
+- `action`: `allow`, `count`, or `block`
 
-Initial MVP rule execution should be delegated to Coraza and CRS-compatible rule
-files rather than hand-rolled parsing.
+Implementation notes:
+
+- Regex rules must have timeouts or use a safe regex engine.
+- Custom rules must not support exploit generation or active scanning behavior.
+- MVP should keep custom rules simple and deterministic.
 
 ## IP Set
 
-An IP set is a reusable collection of CIDR ranges.
+An IP set is a named collection of CIDR ranges.
 
-Fields to define:
+Suggested fields:
 
 - `id`
 - `tenant_id`
 - `name`
 - `description`
 - `cidrs`
-- `action`: `allow`, `block`, or `count`
+- `action`: `allow`, `count`, or `block`
+- `enabled`
+
+Evaluation rules:
+
+- Exact IP/CIDR membership should be evaluated before WAF inspection.
+- If both allow and block sets match, MVP should prefer explicit block unless a
+  policy-level override is added later.
+- IP set matches must be recorded in audit events.
 
 ## Rate Limit
 
-A rate limit defines request thresholds over a time window.
+A rate limit defines a threshold over a window.
 
-Fields to define:
+Suggested fields:
 
 - `id`
 - `tenant_id`
 - `app_id`
 - `name`
-- `key`: `source_ip`, `host`, `path`, or future composite keys
+- `key`: `source_ip`, `host`, `path`, or future composite key
 - `limit`
 - `window_seconds`
 - `action`: `count` or `block`
+- `fail_mode`: `open` or `closed`
+- `enabled`
+
+MVP implementation:
+
+- Use Redis counters with expiration equal to the configured window.
+- Include tenant and app IDs in the Redis key.
+- Default `fail_mode` is `open` to avoid outage during Redis incidents.
+- Log rate-limit backend failures as audit or health events.
+
+## API Key
+
+API keys authenticate automation against the control API.
+
+Suggested fields:
+
+- `id`
+- `tenant_id`
+- `name`
+- `key_hash`
+- `scopes`
+- `last_used_at`
+- `expires_at`
+- `created_at`
+
+Implementation notes:
+
+- Store only hashed keys.
+- Show the plaintext key only once at creation.
+- Scope keys to specific actions such as `events:read` or `policies:write`.
 
 ## Evaluation Order
 
 ```text
-Request
+Resolve app by Host
   |
   v
-Resolve tenant/app by hostname
+Load active policy revision
   |
   v
-Resolve active policy
+IP sets
   |
   v
-Evaluate IP sets
+Rate limits
   |
   v
-Evaluate rate limits
+Managed WAF rule groups
   |
   v
-Run WAF rule groups
+Custom rules
   |
   v
-Apply policy mode and rule action
+Apply count/block mode
 ```
 
-TODO:
+## MVP vs Later Phase
 
-- Define conflict resolution between allow/block IP sets
-- Define rule priority and override model
-- Define policy versioning and rollback semantics
-- Define generated gateway configuration snapshot format
+MVP:
+
+- Tenants, apps, origins, policies
+- Managed rule group metadata
+- Basic custom rules
+- IP sets
+- Redis-backed rate limits
+- API keys with hashed storage
+
+Later phase:
+
+- Fine-grained RBAC
+- Policy drafts and approvals
+- Rule exclusions and overrides
+- Multi-origin routing
+- Signed policy snapshots
+- Managed rule update channels

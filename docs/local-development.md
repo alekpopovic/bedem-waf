@@ -26,6 +26,18 @@ shared or production environments.
 ./scripts/dev-up.sh
 ```
 
+```mermaid
+flowchart LR
+    env[.env from .env.example] --> devup[scripts/dev-up.sh]
+    devup --> compose[deployments/docker-compose.yml]
+    compose --> postgres[(Postgres)]
+    compose --> redis[(Redis)]
+    compose --> clickhouse[(ClickHouse)]
+    developer[Developer] --> gateway[go run gateway]
+    developer --> api[go run control-api]
+    developer --> worker[go run worker]
+```
+
 This starts:
 
 - Postgres for configuration data
