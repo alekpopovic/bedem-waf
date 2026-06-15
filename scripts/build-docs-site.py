@@ -214,14 +214,13 @@ def render_page(page: Page) -> str:
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       const storedTheme = localStorage.getItem('bedemwaf-theme');
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      if (storedTheme === 'dark' || (!storedTheme && prefersDark)) {{
+      if (storedTheme === 'dark') {{
         document.documentElement.classList.add('dark');
       }}
     </script>
     <link rel="stylesheet" href="assets/site.css">
   </head>
-  <body class="bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100">
+  <body class="bg-white text-slate-950 antialiased dark:bg-slate-950 dark:text-slate-100">
     <div class="min-h-screen lg:grid lg:grid-cols-[18rem_minmax(0,1fr)_16rem]">
       <aside class="sidebar">
         <div class="brand">
@@ -267,10 +266,12 @@ def write_assets() -> None:
     (assets / "site.css").write_text(
         """
 .sidebar {
+  background: rgb(255 255 255);
   border-bottom: 1px solid rgb(226 232 240);
   padding: 1rem;
 }
 .dark .sidebar {
+  background: rgb(2 6 23);
   border-color: rgb(30 41 59);
 }
 @media (min-width: 1024px) {
@@ -303,14 +304,18 @@ def write_assets() -> None:
   color: rgb(248 250 252);
 }
 .theme-toggle {
+  background: rgb(255 255 255);
   border: 1px solid rgb(203 213 225);
   border-radius: 0.375rem;
+  color: rgb(15 23 42);
   padding: 0.375rem 0.625rem;
   font-size: 0.8125rem;
   font-weight: 700;
 }
 .dark .theme-toggle {
+  background: rgb(15 23 42);
   border-color: rgb(51 65 85);
+  color: rgb(248 250 252);
 }
 .tagline {
   margin-top: 0.5rem;
@@ -355,8 +360,12 @@ def write_assets() -> None:
   color: rgb(248 250 252);
 }
 .content {
+  background: rgb(255 255 255);
   min-width: 0;
   padding: 1.25rem;
+}
+.dark .content {
+  background: rgb(2 6 23);
 }
 @media (min-width: 768px) {
   .content {
@@ -428,23 +437,38 @@ def write_assets() -> None:
 }
 .doc-content code {
   border-radius: 0.25rem;
-  background: rgb(226 232 240);
+  background: rgb(241 245 249);
+  border: 1px solid rgb(226 232 240);
+  color: rgb(15 23 42);
   padding: 0.1rem 0.3rem;
   font-size: 0.9em;
 }
 .dark .doc-content code {
   background: rgb(30 41 59);
+  border-color: rgb(51 65 85);
+  color: rgb(226 232 240);
 }
 .doc-content pre {
   margin: 1.25rem 0;
   overflow-x: auto;
   border: 1px solid rgb(203 213 225);
   border-radius: 0.5rem;
-  background: rgb(15 23 42);
-  color: rgb(226 232 240);
+  background: rgb(248 250 252);
+  color: rgb(15 23 42);
   padding: 1rem;
   font-size: 0.875rem;
   line-height: 1.55;
+}
+.dark .doc-content pre {
+  border-color: rgb(51 65 85);
+  background: rgb(15 23 42);
+  color: rgb(226 232 240);
+}
+.doc-content pre code {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  padding: 0;
 }
 .doc-content pre.mermaid {
   background: rgb(255 255 255);
@@ -468,10 +492,12 @@ h4:hover .anchor {
 }
 .toc {
   display: none;
+  background: rgb(255 255 255);
   border-left: 1px solid rgb(226 232 240);
   padding: 1.5rem 1rem;
 }
 .dark .toc {
+  background: rgb(2 6 23);
   border-color: rgb(30 41 59);
 }
 @media (min-width: 1024px) {
