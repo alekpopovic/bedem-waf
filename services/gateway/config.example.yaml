@@ -1,0 +1,37 @@
+server:
+  listen_addr: ":8080"
+  # X-Forwarded-For is ignored unless the remote address matches one of these CIDRs.
+  trusted_proxies: []
+
+redis:
+  enabled: false
+  addr: "localhost:6379"
+
+waf:
+  enabled: true
+  engine: "coraza"
+  rule_engine: "DetectionOnly"
+  request_body_limit_bytes: 1048576
+  directives_file: "./rules/coraza.conf"
+  debug_body_preview: false
+  body_preview_bytes: 256
+
+apps:
+  - id: "app-local"
+    hostnames:
+      - "localhost"
+      - "example.local"
+    origin:
+      url: "http://localhost:9000"
+    policy:
+      mode: "count"
+      default_action: "allow"
+      ip_blocklist:
+        - "203.0.113.10/32"
+      ip_allowlist: []
+      rate_limits:
+        - name: "global-ip-limit"
+          key: "ip"
+          limit: 100
+          window_seconds: 60
+          action: "block"
