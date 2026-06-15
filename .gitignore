@@ -1,0 +1,27 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Go
+bin/
+coverage.out
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+
+# Local tooling
+.DS_Store
+.idea/
+.vscode/
+
+# Local datastore files
+*.sqlite
+*.db
