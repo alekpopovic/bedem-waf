@@ -8,6 +8,13 @@ redis:
   addr: "localhost:6379"
   fail_mode: "open"
 
+control_api:
+  enabled: false
+  base_url: "http://localhost:8081"
+  gateway_api_key: "${BEDEMWAF_GATEWAY_API_KEY}"
+  cache_ttl_seconds: 30
+  fail_behavior: "use_stale_then_fail_open"
+
 waf:
   enabled: true
   engine: "coraza"

@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -90,6 +91,20 @@ type Store struct {
 	byHost map[string]*App
 }
 
+type LookupResult struct {
+	App        *App
+	Found      bool
+	FailOpen   bool
+	StatusCode int
+	Reason     string
+	Warning    string
+	Stale      bool
+}
+
+type Provider interface {
+	Lookup(ctx context.Context, host string) LookupResult
+}
+
 func NewStore(apps []config.AppConfig) (*Store, error) {
 	store := &Store{byHost: make(map[string]*App)}
 	for _, appCfg := range apps {
@@ -106,6 +121,10 @@ func NewStore(apps []config.AppConfig) (*Store, error) {
 		}
 	}
 	return store, nil
+}
+
+func NewApp(appCfg config.AppConfig) (*App, error) {
+	return newApp(appCfg)
 }
 
 func newApp(appCfg config.AppConfig) (*App, error) {
@@ -161,6 +180,14 @@ func newApp(appCfg config.AppConfig) (*App, error) {
 func (s *Store) MatchHost(host string) (*App, bool) {
 	app, ok := s.byHost[NormalizeHost(host)]
 	return app, ok
+}
+
+func (s *Store) Lookup(_ context.Context, host string) LookupResult {
+	app, ok := s.MatchHost(host)
+	if !ok {
+		return LookupResult{Found: false, Reason: "no_matching_app"}
+	}
+	return LookupResult{App: app, Found: true}
 }
 
 func NormalizeHost(host string) string {

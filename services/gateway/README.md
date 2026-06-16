@@ -48,6 +48,8 @@ Important defaults:
 - `X-Forwarded-For` is only trusted when `server.trusted_proxies` is configured
   and the immediate peer IP matches that list.
 - Policy mode defaults to `count`.
+- Local YAML policies are used when `control_api.enabled` is `false`.
+- Remote Control API policies are used when `control_api.enabled` is `true`.
 - Redis rate limiting is disabled unless `redis.enabled` is `true`.
 - Redis rate limiting fails open by default with `redis.fail_mode: "open"`.
 - Coraza runs when `waf.enabled` is `true`.
@@ -55,6 +57,59 @@ Important defaults:
 - Request bodies are read only up to `waf.request_body_limit_bytes`, then
   restored before proxying.
 - Full request bodies are never logged.
+
+## Policy Loading
+
+The gateway supports two policy loading modes.
+
+Local development mode uses `apps` from YAML:
+
+```yaml
+control_api:
+  enabled: false
+
+apps:
+  - id: "app-local"
+    hostnames: ["localhost"]
+    origin:
+      url: "http://localhost:9000"
+    policy:
+      mode: "count"
+      default_action: "allow"
+```
+
+Remote mode fetches the active compiled policy from the Control API by normalized
+`Host` header:
+
+```yaml
+control_api:
+  enabled: true
+  base_url: "http://localhost:8081"
+  gateway_api_key: "${BEDEMWAF_GATEWAY_API_KEY}"
+  cache_ttl_seconds: 30
+  fail_behavior: "use_stale_then_fail_open"
+```
+
+Lookup flow:
+
+1. Normalize the request `Host`.
+2. Check the in-memory policy cache.
+3. Fetch `GET /v1/gateway/apps/{hostname}/policy` on cache miss or expiry.
+4. Cache successful responses for `cache_ttl_seconds`.
+5. If fetch fails and a stale policy exists, use the stale policy and log a
+   warning.
+6. If fetch fails without stale policy, apply `fail_behavior`.
+
+Supported `fail_behavior` values:
+
+- `fail_open`: allow without a policy decision and emit an audit warning.
+- `fail_closed`: return `503`.
+- `use_stale_then_fail_open`: use stale if present, otherwise fail open.
+
+Remote policy fetch uses a short context timeout and a simple per-host lock to
+avoid thundering-herd refreshes. Metrics placeholders exist for
+`policy_cache_hit_total`, `policy_cache_miss_total`, and
+`policy_fetch_error_total`.
 
 ## Audit Logs
 

@@ -10,10 +10,11 @@ import (
 )
 
 type Config struct {
-	Server ServerConfig `yaml:"server"`
-	Redis  RedisConfig  `yaml:"redis"`
-	WAF    WAFConfig    `yaml:"waf"`
-	Apps   []AppConfig  `yaml:"apps"`
+	Server     ServerConfig     `yaml:"server"`
+	Redis      RedisConfig      `yaml:"redis"`
+	WAF        WAFConfig        `yaml:"waf"`
+	ControlAPI ControlAPIConfig `yaml:"control_api"`
+	Apps       []AppConfig      `yaml:"apps"`
 }
 
 type ServerConfig struct {
@@ -35,6 +36,14 @@ type WAFConfig struct {
 	DirectivesFile        string `yaml:"directives_file"`
 	DebugBodyPreview      bool   `yaml:"debug_body_preview"`
 	BodyPreviewBytes      int64  `yaml:"body_preview_bytes"`
+}
+
+type ControlAPIConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	BaseURL         string `yaml:"base_url"`
+	GatewayAPIKey   string `yaml:"gateway_api_key"`
+	CacheTTLSeconds int    `yaml:"cache_ttl_seconds"`
+	FailBehavior    string `yaml:"fail_behavior"`
 }
 
 type AppConfig struct {
@@ -60,55 +69,55 @@ type PolicyConfig struct {
 }
 
 type RateLimitConfig struct {
-	ID              string          `yaml:"id"`
-	Name            string          `yaml:"name"`
-	Enabled         bool            `yaml:"enabled"`
-	Priority        int             `yaml:"priority"`
-	MatchExpression ConditionConfig `yaml:"match"`
-	KeyType         string          `yaml:"key_type"`
-	KeyHeader       string          `yaml:"key_header"`
-	Limit           int             `yaml:"limit"`
-	WindowSeconds   int             `yaml:"window_seconds"`
-	Action          string          `yaml:"action"`
-	StatusCode      int             `yaml:"status_code"`
+	ID              string          `yaml:"id" json:"id"`
+	Name            string          `yaml:"name" json:"name"`
+	Enabled         bool            `yaml:"enabled" json:"enabled"`
+	Priority        int             `yaml:"priority" json:"priority"`
+	MatchExpression ConditionConfig `yaml:"match" json:"match"`
+	KeyType         string          `yaml:"key_type" json:"key_type"`
+	KeyHeader       string          `yaml:"key_header" json:"key_header"`
+	Limit           int             `yaml:"limit" json:"limit"`
+	WindowSeconds   int             `yaml:"window_seconds" json:"window_seconds"`
+	Action          string          `yaml:"action" json:"action"`
+	StatusCode      int             `yaml:"status_code" json:"status_code"`
 
 	// Deprecated compatibility alias for older sample configs.
-	Key string `yaml:"key"`
+	Key string `yaml:"key" json:"key"`
 }
 
 type CustomRuleConfig struct {
-	ID            string          `yaml:"id"`
-	Name          string          `yaml:"name"`
-	Priority      int             `yaml:"priority"`
-	Enabled       bool            `yaml:"enabled"`
-	Action        string          `yaml:"action"`
-	StatusCode    int             `yaml:"status_code"`
-	TerminalAllow bool            `yaml:"terminal_allow"`
-	When          ConditionConfig `yaml:"when"`
+	ID            string          `yaml:"id" json:"id"`
+	Name          string          `yaml:"name" json:"name"`
+	Priority      int             `yaml:"priority" json:"priority"`
+	Enabled       bool            `yaml:"enabled" json:"enabled"`
+	Action        string          `yaml:"action" json:"action"`
+	StatusCode    int             `yaml:"status_code" json:"status_code"`
+	TerminalAllow bool            `yaml:"terminal_allow" json:"terminal_allow"`
+	When          ConditionConfig `yaml:"when" json:"when"`
 }
 
 type ConditionConfig struct {
-	All                []ConditionConfig `yaml:"all"`
-	Any                []ConditionConfig `yaml:"any"`
-	MethodEquals       string            `yaml:"method_equals"`
-	PathEquals         string            `yaml:"path_equals"`
-	PathStartsWith     string            `yaml:"path_starts_with"`
-	HostEquals         string            `yaml:"host_equals"`
-	HeaderContains     *HeaderMatch      `yaml:"header_contains"`
-	HeaderEquals       *HeaderMatch      `yaml:"header_equals"`
-	QueryParamContains *QueryParamMatch  `yaml:"query_parameter_contains"`
-	ClientIPInIPSet    string            `yaml:"client_ip_in_ip_set"`
-	ClientIPNotInIPSet string            `yaml:"client_ip_not_in_ip_set"`
+	All                []ConditionConfig `yaml:"all" json:"all"`
+	Any                []ConditionConfig `yaml:"any" json:"any"`
+	MethodEquals       string            `yaml:"method_equals" json:"method_equals"`
+	PathEquals         string            `yaml:"path_equals" json:"path_equals"`
+	PathStartsWith     string            `yaml:"path_starts_with" json:"path_starts_with"`
+	HostEquals         string            `yaml:"host_equals" json:"host_equals"`
+	HeaderContains     *HeaderMatch      `yaml:"header_contains" json:"header_contains"`
+	HeaderEquals       *HeaderMatch      `yaml:"header_equals" json:"header_equals"`
+	QueryParamContains *QueryParamMatch  `yaml:"query_parameter_contains" json:"query_parameter_contains"`
+	ClientIPInIPSet    string            `yaml:"client_ip_in_ip_set" json:"client_ip_in_ip_set"`
+	ClientIPNotInIPSet string            `yaml:"client_ip_not_in_ip_set" json:"client_ip_not_in_ip_set"`
 }
 
 type HeaderMatch struct {
-	Name  string `yaml:"name"`
-	Value string `yaml:"value"`
+	Name  string `yaml:"name" json:"name"`
+	Value string `yaml:"value" json:"value"`
 }
 
 type QueryParamMatch struct {
-	Name  string `yaml:"name"`
-	Value string `yaml:"value"`
+	Name  string `yaml:"name" json:"name"`
+	Value string `yaml:"value" json:"value"`
 }
 
 func LoadFile(path string) (Config, error) {
@@ -117,7 +126,7 @@ func LoadFile(path string) (Config, error) {
 		return Config{}, err
 	}
 	var cfg Config
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder := yaml.NewDecoder(bytes.NewReader([]byte(os.ExpandEnv(string(data)))))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&cfg); err != nil {
 		return Config{}, err
@@ -150,6 +159,15 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.WAF.BodyPreviewBytes == 0 {
 		cfg.WAF.BodyPreviewBytes = 512
+	}
+	if cfg.ControlAPI.BaseURL == "" {
+		cfg.ControlAPI.BaseURL = "http://localhost:8081"
+	}
+	if cfg.ControlAPI.CacheTTLSeconds == 0 {
+		cfg.ControlAPI.CacheTTLSeconds = 30
+	}
+	if cfg.ControlAPI.FailBehavior == "" {
+		cfg.ControlAPI.FailBehavior = "use_stale_then_fail_open"
 	}
 	for i := range cfg.Apps {
 		if cfg.Apps[i].Policy.Mode == "" {
@@ -187,8 +205,25 @@ func applyDefaults(cfg *Config) {
 }
 
 func validate(cfg Config) error {
-	if len(cfg.Apps) == 0 {
+	if len(cfg.Apps) == 0 && !cfg.ControlAPI.Enabled {
 		return fmt.Errorf("at least one app is required")
+	}
+	if cfg.ControlAPI.Enabled {
+		parsed, err := url.Parse(cfg.ControlAPI.BaseURL)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("control_api base_url is invalid")
+		}
+		if cfg.ControlAPI.GatewayAPIKey == "" {
+			return fmt.Errorf("control_api gateway_api_key is required when enabled")
+		}
+		if cfg.ControlAPI.CacheTTLSeconds <= 0 {
+			return fmt.Errorf("control_api cache_ttl_seconds must be positive")
+		}
+		switch cfg.ControlAPI.FailBehavior {
+		case "fail_open", "fail_closed", "use_stale_then_fail_open":
+		default:
+			return fmt.Errorf("invalid control_api fail_behavior %q", cfg.ControlAPI.FailBehavior)
+		}
 	}
 	for _, app := range cfg.Apps {
 		if app.ID == "" {

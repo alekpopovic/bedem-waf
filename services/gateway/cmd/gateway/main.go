@@ -14,6 +14,7 @@ import (
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/audit"
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/config"
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/policy"
+	"github.com/bedemwaf/bedemwaf/services/gateway/internal/policyclient"
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/proxy"
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/ratelimit"
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/waf"
@@ -43,9 +44,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	store, err := policy.NewStore(cfg.Apps)
+	provider, store, err := buildPolicyProvider(cfg, logger)
 	if err != nil {
-		logger.Error("build_policy_store_failed", "error", err)
+		logger.Error("build_policy_provider_failed", "error", err)
 		os.Exit(1)
 	}
 
@@ -68,6 +69,7 @@ func main() {
 	handler, err := proxy.NewGateway(proxy.Options{
 		Config:      cfg,
 		Policies:    store,
+		Provider:    provider,
 		RateLimiter: limiter,
 		Auditor:     auditDispatcher,
 		WAF:         wafEngine,
@@ -107,6 +109,21 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("gateway_stopped")
+}
+
+func buildPolicyProvider(cfg config.Config, logger *slog.Logger) (policy.Provider, *policy.Store, error) {
+	if cfg.ControlAPI.Enabled {
+		client, err := policyclient.NewClient(cfg.ControlAPI, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		return policyclient.NewProvider(client, cfg.ControlAPI, logger), nil, nil
+	}
+	store, err := policy.NewStore(cfg.Apps)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store, store, nil
 }
 
 func defaultConfigPath() string {

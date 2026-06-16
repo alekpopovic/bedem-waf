@@ -30,6 +30,7 @@ import (
 type Options struct {
 	Config      config.Config
 	Policies    *policy.Store
+	Provider    policy.Provider
 	RateLimiter ratelimit.Limiter
 	Auditor     audit.Logger
 	WAF         waf.Engine
@@ -40,6 +41,7 @@ type Options struct {
 type Gateway struct {
 	cfg            config.Config
 	policies       *policy.Store
+	provider       policy.Provider
 	limiter        ratelimit.Limiter
 	auditor        audit.Logger
 	waf            waf.Engine
@@ -49,8 +51,11 @@ type Gateway struct {
 }
 
 func NewGateway(opts Options) (*Gateway, error) {
-	if opts.Policies == nil {
-		return nil, errors.New("policy store is required")
+	if opts.Provider == nil {
+		if opts.Policies == nil {
+			return nil, errors.New("policy provider is required")
+		}
+		opts.Provider = opts.Policies
 	}
 	if opts.RateLimiter == nil {
 		opts.RateLimiter = ratelimit.NoopLimiter{}
@@ -68,6 +73,7 @@ func NewGateway(opts Options) (*Gateway, error) {
 	return &Gateway{
 		cfg:            opts.Config,
 		policies:       opts.Policies,
+		provider:       opts.Provider,
 		limiter:        opts.RateLimiter,
 		auditor:        opts.Auditor,
 		waf:            opts.WAF,
@@ -104,13 +110,31 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	app, ok := g.policies.MatchHost(host)
-	if !ok {
-		event.Action = string(decision.ActionBlock)
-		event.Reason = "no_matching_app"
-		writeJSONError(recorder, http.StatusNotFound, requestID, "no matching app")
+	lookup := g.provider.Lookup(r.Context(), host)
+	if lookup.Warning != "" {
+		event.Reason = lookup.Warning
+		g.logger.Warn("policy_lookup_warning", "host", host, "reason", lookup.Warning, "request_id", requestID)
+	}
+	if lookup.FailOpen {
+		event.Action = string(decision.ActionAllow)
+		event.Reason = lookup.Reason
 		return
 	}
+	if !lookup.Found {
+		event.Action = string(decision.ActionBlock)
+		event.Reason = lookup.Reason
+		status := lookup.StatusCode
+		if status == 0 {
+			status = http.StatusNotFound
+		}
+		message := "no matching app"
+		if status == http.StatusServiceUnavailable {
+			message = "policy unavailable"
+		}
+		writeJSONError(recorder, status, requestID, message)
+		return
+	}
+	app := lookup.App
 	event.TenantID = app.TenantID
 	event.AppID = app.ID
 	event.Mode = string(app.Mode)
