@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BEDEMWAF_ADMIN_API_KEY: ci_admin_key_placeholder
+  BEDEMWAF_GATEWAY_API_KEY: ci_gateway_key_placeholder
+  NEXT_PUBLIC_CONTROL_API_URL: http://localhost:8081
+
+jobs:
+  go-tests:
+    name: Go tests (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: gateway
+            path: services/gateway
+          - service: control-api
+            path: services/control-api
+          - service: worker
+            path: services/worker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache: true
+          cache-dependency-path: |
+            services/gateway/go.sum
+            services/control-api/go.sum
+            services/worker/go.mod
+
+      - name: Run tests
+        working-directory: ${{ matrix.path }}
+        run: go test ./...
+
+  dashboard:
+    name: Dashboard typecheck and build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dependencies
+        working-directory: dashboard
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: dashboard
+        run: npm run typecheck
+
+      - name: Lint
+        working-directory: dashboard
+        run: npm run lint
+
+      - name: Build
+        working-directory: dashboard
+        run: npm run build
+
+  lint-and-compose:
+    name: Lint and Compose validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache: true
+          cache-dependency-path: |
+            services/gateway/go.sum
+            services/control-api/go.sum
+            services/worker/go.mod
+
+      - name: Run lint script
+        run: ./scripts/lint.sh
+
+      - name: Validate Docker Compose config
+        working-directory: deployments
+        run: docker compose --env-file ../.env.example config
+
+  local-script:
+    name: Local test script
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache: true
+          cache-dependency-path: |
+            services/gateway/go.sum
+            services/control-api/go.sum
+            services/worker/go.mod
+
+      - name: Run local test script
+        run: ./scripts/test.sh

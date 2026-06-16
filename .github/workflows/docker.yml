@@ -1,0 +1,35 @@
+name: Docker
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "deployments/**"
+      - "dashboard/Dockerfile"
+      - "services/**/Dockerfile"
+      - ".github/workflows/docker.yml"
+
+permissions:
+  contents: read
+
+env:
+  BEDEMWAF_ADMIN_API_KEY: ci_admin_key_placeholder
+  BEDEMWAF_GATEWAY_API_KEY: ci_gateway_key_placeholder
+
+jobs:
+  validate:
+    name: Validate Docker Compose
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Compose config
+        working-directory: deployments
+        run: docker compose --env-file ../.env.example config
+
+      - name: Placeholder
+        run: |
+          echo "Docker image build/push jobs will be added after registry and release policy are defined."
+          echo "This workflow intentionally does not require registry credentials."

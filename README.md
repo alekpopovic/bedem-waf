@@ -1,5 +1,9 @@
 # BedemWAF
 
+[![CI](https://github.com/alekpopovic/BedemWAF/actions/workflows/ci.yml/badge.svg)](https://github.com/alekpopovic/BedemWAF/actions/workflows/ci.yml)
+[![Docker](https://github.com/alekpopovic/BedemWAF/actions/workflows/docker.yml/badge.svg)](https://github.com/alekpopovic/BedemWAF/actions/workflows/docker.yml)
+[![Docs](https://github.com/alekpopovic/BedemWAF/actions/workflows/pages.yml/badge.svg)](https://github.com/alekpopovic/BedemWAF/actions/workflows/pages.yml)
+
 BedemWAF is a self-hosted managed web application firewall platform for teams
 that want AWS WAF-style policy management while keeping enforcement in their own
 infrastructure. It is designed to sit directly in front of NGINX origins and
@@ -144,6 +148,40 @@ Follow logs or stop the stack:
 ```bash
 ./scripts/dev-logs.sh
 ./scripts/dev-down.sh
+```
+
+## Local Quality Checks
+
+CI uses the same checks that are available locally.
+
+Run all current Go tests:
+
+```bash
+./scripts/test.sh
+```
+
+Run Go formatting and vet checks. If dashboard dependencies are installed, this
+also runs the dashboard lint script:
+
+```bash
+./scripts/lint.sh
+```
+
+Run dashboard checks:
+
+```bash
+cd dashboard
+npm ci
+npm run typecheck
+npm run lint
+npm run build
+```
+
+Validate the local Docker Compose file:
+
+```bash
+cd deployments
+docker compose --env-file ../.env.example config
 ```
 
 ## Current Implementation Status
