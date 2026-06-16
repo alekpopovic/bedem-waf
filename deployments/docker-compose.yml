@@ -162,6 +162,9 @@ services:
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
       BEDEMWAF_DATABASE_URL: postgres://${POSTGRES_USER:-bedemwaf}:${POSTGRES_PASSWORD:-bedemwaf_dev_password}@postgres:5432/${POSTGRES_DB:-bedemwaf}?sslmode=disable
       BEDEMWAF_RULES_DIR: /rules
+      BEDEMWAF_WORKER_METRICS_ADDR: ":9092"
+    expose:
+      - "9092"
     volumes:
       - ./rules:/rules:ro
     depends_on:
@@ -195,7 +198,51 @@ services:
       timeout: 5s
       retries: 10
 
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: ["observability"]
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      gateway:
+        condition: service_healthy
+      control-api:
+        condition: service_healthy
+      worker:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/ready | grep -q Prometheus"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   redis_data:
   clickhouse_data:
+  prometheus_data:
+  grafana_data:

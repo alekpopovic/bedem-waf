@@ -48,6 +48,22 @@ func TestHealthzBypassesPolicyLookup(t *testing.T) {
 	}
 }
 
+func TestMetricsEndpoint(t *testing.T) {
+	gateway := testGateway(t, "block", "http://127.0.0.1:9000", ratelimit.NoopLimiter{})
+	req := httptest.NewRequest(http.MethodGet, "http://unconfigured.local/metrics", nil)
+	req.RemoteAddr = "198.51.100.10:12345"
+	rec := httptest.NewRecorder()
+
+	gateway.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "bedem_requests_total") {
+		t.Fatalf("metrics body missing gateway metric: %s", rec.Body.String())
+	}
+}
+
 func TestInvalidHostReturns400(t *testing.T) {
 	gateway := testGateway(t, "block", "http://127.0.0.1:9000", ratelimit.NoopLimiter{})
 	req := httptest.NewRequest(http.MethodGet, "http://example.local/", nil)

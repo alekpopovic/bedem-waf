@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/config"
+	"github.com/bedemwaf/bedemwaf/services/gateway/internal/metrics"
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/policy"
 )
 
@@ -147,9 +148,11 @@ func (p *Provider) Lookup(ctx context.Context, host string) policy.LookupResult 
 	now := p.now().UTC()
 	if entry, ok := p.cached(host); ok && now.Before(entry.expiresAt) {
 		p.metrics.policyCacheHitTotal.Add(1)
+		metrics.IncPolicyCacheHit()
 		return policy.LookupResult{App: entry.app, Found: true}
 	}
 	p.metrics.policyCacheMissTotal.Add(1)
+	metrics.IncPolicyCacheMiss()
 
 	lock := p.hostLock(host)
 	lock.Lock()
@@ -158,6 +161,7 @@ func (p *Provider) Lookup(ctx context.Context, host string) policy.LookupResult 
 	now = p.now().UTC()
 	if entry, ok := p.cached(host); ok && now.Before(entry.expiresAt) {
 		p.metrics.policyCacheHitTotal.Add(1)
+		metrics.IncPolicyCacheHit()
 		return policy.LookupResult{App: entry.app, Found: true}
 	}
 

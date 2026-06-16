@@ -120,6 +120,16 @@ Local URLs:
 - Demo origin through NGINX: http://localhost:9000
 - Demo app hostname through gateway: `demo.local`
 
+Optional observability profile:
+
+```bash
+cd deployments
+docker compose --env-file ../.env.example --profile observability up -d prometheus grafana
+```
+
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3001
+
 Seed the demo tenant, app, policy, and published gateway policy:
 
 ```bash
@@ -215,6 +225,7 @@ Next implementation steps:
 - [Event Schema](docs/event-schema.md)
 - [OpenAPI](docs/openapi.yaml)
 - [Managed Rules](docs/managed-rules.md)
+- [Observability](docs/observability.md)
 - [Safe Rollout](docs/safe-rollout.md)
 - [Security Hardening](docs/security-hardening.md)
 - [Production Checklist](docs/production-checklist.md)

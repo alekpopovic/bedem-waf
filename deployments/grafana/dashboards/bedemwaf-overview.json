@@ -1,0 +1,55 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "content": "BedemWAF observability dashboard placeholder. Add request, block, rate-limit, policy-cache, audit-drop, Control API, and worker job panels after Prometheus datasource provisioning is finalized.",
+        "mode": "markdown"
+      },
+      "pluginVersion": "11.3.0",
+      "title": "BedemWAF Overview",
+      "type": "text"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 40,
+  "tags": [
+    "bedemwaf",
+    "waf",
+    "security"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "BedemWAF Overview",
+  "uid": "bedemwaf-overview",
+  "version": 1,
+  "weekStart": ""
+}

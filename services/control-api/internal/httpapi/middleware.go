@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/bedemwaf/bedemwaf/services/control-api/internal/metrics"
 )
 
 type contextKey string
@@ -42,6 +44,7 @@ func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 		start := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(recorder, r)
+		metrics.ObserveRequest(r.Method, recorder.status, time.Since(start))
 		logger.Info("http_request",
 			"request_id", requestIDFromContext(r.Context()),
 			"method", r.Method,

@@ -14,6 +14,7 @@ import (
 	"github.com/bedemwaf/bedemwaf/services/control-api/internal/auth"
 	"github.com/bedemwaf/bedemwaf/services/control-api/internal/db"
 	"github.com/bedemwaf/bedemwaf/services/control-api/internal/events"
+	"github.com/bedemwaf/bedemwaf/services/control-api/internal/metrics"
 	"github.com/bedemwaf/bedemwaf/services/control-api/internal/models"
 )
 
@@ -68,6 +69,7 @@ func (s *Server) Routes() http.Handler {
 	}
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /readyz", s.readyz)
+	mux.Handle("GET /metrics", metrics.Handler())
 	mux.Handle("GET /v1/tenants", adminGlobal(s.listTenants))
 	mux.Handle("POST /v1/tenants", adminGlobal(s.createTenant))
 	mux.Handle("GET /v1/apps", adminTenant(s.listApps))

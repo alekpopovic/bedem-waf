@@ -22,6 +22,7 @@ import (
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/audit/redaction"
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/config"
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/decision"
+	"github.com/bedemwaf/bedemwaf/services/gateway/internal/metrics"
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/policy"
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/ratelimit"
 	"github.com/bedemwaf/bedemwaf/services/gateway/internal/waf"
@@ -96,6 +97,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"status":"ok"}` + "\n"))
 		return
 	}
+	if r.URL.Path == "/metrics" {
+		metrics.Handler().ServeHTTP(w, r)
+		return
+	}
 	start := time.Now()
 	requestID := requestID()
 	recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
@@ -121,6 +126,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		event.Status = recorder.status
 		event.LatencyMS = time.Since(start).Milliseconds()
+		metrics.ObserveRequest(event.AppID, event.Host, event.Action, event.Reason, event.Status, time.Since(start))
 		if g.auditor != nil {
 			g.auditor.Log(event)
 		}
@@ -241,6 +247,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	event.Tags = final.Tags
 	event.AnomalyScore = final.AnomalyScore
 	if final.RateLimit != nil {
+		metrics.IncRateLimited()
 		event.RateLimit = &audit.RateLimit{
 			Limit:     final.RateLimit.Limit,
 			Remaining: final.RateLimit.Remaining,
@@ -270,10 +277,12 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		event.OriginStatus = resp.StatusCode
 		event.OriginLatencyMS = time.Since(originStart).Milliseconds()
+		metrics.ObserveOrigin(time.Since(originStart))
 		return nil
 	}
 	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
 		event.OriginLatencyMS = time.Since(originStart).Milliseconds()
+		metrics.ObserveOrigin(time.Since(originStart))
 		g.logger.Warn("origin_proxy_failed", "error", err, "app_id", app.ID, "request_id", requestID)
 		writeJSONError(rw, http.StatusBadGateway, requestID, "origin unavailable")
 	}

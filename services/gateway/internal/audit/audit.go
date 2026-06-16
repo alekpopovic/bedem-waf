@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/bedemwaf/bedemwaf/services/gateway/internal/metrics"
 )
 
 type Event struct {
@@ -298,6 +300,7 @@ func (d *Dispatcher) Log(event Event) {
 	case d.queue <- event:
 	default:
 		d.metrics.eventsDroppedTotal.Add(1)
+		metrics.IncAuditEventDropped()
 		d.logger.Warn("audit_event_dropped", "reason", "queue_full", "request_id", event.RequestID)
 	}
 }
