@@ -213,6 +213,7 @@ Next implementation steps:
 - [Database Schema](docs/database-schema.md)
 - [Event Schema](docs/event-schema.md)
 - [OpenAPI](docs/openapi.yaml)
+- [Managed Rules](docs/managed-rules.md)
 - [Security Hardening](docs/security-hardening.md)
 - [Production Checklist](docs/production-checklist.md)
 

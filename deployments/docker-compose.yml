@@ -160,6 +160,10 @@ services:
       - /tmp
     environment:
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      BEDEMWAF_DATABASE_URL: postgres://${POSTGRES_USER:-bedemwaf}:${POSTGRES_PASSWORD:-bedemwaf_dev_password}@postgres:5432/${POSTGRES_DB:-bedemwaf}?sslmode=disable
+      BEDEMWAF_RULES_DIR: /rules
+    volumes:
+      - ./rules:/rules:ro
     depends_on:
       postgres:
         condition: service_healthy

@@ -72,6 +72,9 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /v1/policies/{policy_id}", s.requireAuth(http.HandlerFunc(s.getPolicy)))
 	mux.Handle("PATCH /v1/policies/{policy_id}", s.requireAuth(http.HandlerFunc(s.patchPolicy)))
 	mux.Handle("POST /v1/policies/{policy_id}/publish", s.requireAuth(http.HandlerFunc(s.publishPolicy)))
+	mux.Handle("GET /v1/managed-rule-sets", s.requireAuth(http.HandlerFunc(s.listManagedRuleSets)))
+	mux.Handle("GET /v1/managed-rule-sets/{id}/versions", s.requireAuth(http.HandlerFunc(s.listManagedRuleVersions)))
+	mux.Handle("POST /v1/managed-rule-sets/{id}/versions/{version_id}/activate", s.requireAuth(http.HandlerFunc(s.activateManagedRuleVersion)))
 	mux.Handle("GET /v1/gateway/apps/{hostname}/policy", s.requireGatewayAuth(http.HandlerFunc(s.getGatewayPolicy)))
 	mux.Handle("GET /v1/events", s.requireAuth(http.HandlerFunc(s.listEvents)))
 	mux.Handle("GET /v1/events/{event_id}", s.requireAuth(http.HandlerFunc(s.getEvent)))
@@ -286,6 +289,33 @@ func (s *Server) getGatewayPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, policy)
+}
+
+func (s *Server) listManagedRuleSets(w http.ResponseWriter, r *http.Request) {
+	sets, err := s.repo.ListManagedRuleSets(r.Context())
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"managed_rule_sets": sets})
+}
+
+func (s *Server) listManagedRuleVersions(w http.ResponseWriter, r *http.Request) {
+	versions, err := s.repo.ListManagedRuleVersions(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"versions": versions})
+}
+
+func (s *Server) activateManagedRuleVersion(w http.ResponseWriter, r *http.Request) {
+	response, err := s.repo.ActivateManagedRuleVersion(r.Context(), r.PathValue("id"), r.PathValue("version_id"))
+	if err != nil {
+		s.handleReadError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, response)
 }
 
 func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {

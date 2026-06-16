@@ -35,6 +35,9 @@ type Repository interface {
 	PublishPolicy(context.Context, string) (models.PublishPolicyResponse, error)
 	GetActivePolicyByApp(context.Context, string) (models.GatewayPolicy, error)
 	GetGatewayPolicyByHostname(context.Context, string) (models.GatewayPolicy, error)
+	ListManagedRuleSets(context.Context) ([]models.ManagedRuleSet, error)
+	ListManagedRuleVersions(context.Context, string) ([]models.ManagedRuleVersion, error)
+	ActivateManagedRuleVersion(context.Context, string, string) (models.ActivateManagedRuleVersionResponse, error)
 	ListEvents(context.Context, int) ([]models.EventRef, error)
 	GetEvent(context.Context, string) (models.EventRef, error)
 	Close()
@@ -476,6 +479,72 @@ func (r *PostgresRepository) GetGatewayPolicyByHostname(ctx context.Context, hos
 		return models.GatewayPolicy{}, err
 	}
 	return decodeGatewayPolicy(snapshot)
+}
+
+func (r *PostgresRepository) ListManagedRuleSets(ctx context.Context) ([]models.ManagedRuleSet, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id::text, name, provider, source, COALESCE(description, ''),
+		       COALESCE(local_path, ''), enabled, metadata, created_at, updated_at
+		FROM managed_rule_sets
+		WHERE deleted_at IS NULL
+		ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sets []models.ManagedRuleSet
+	for rows.Next() {
+		var set models.ManagedRuleSet
+		if err := rows.Scan(&set.ID, &set.Name, &set.Provider, &set.Source, &set.Description, &set.LocalPath, &set.Enabled, &set.Metadata, &set.CreatedAt, &set.UpdatedAt); err != nil {
+			return nil, err
+		}
+		sets = append(sets, set)
+	}
+	return sets, rows.Err()
+}
+
+func (r *PostgresRepository) ListManagedRuleVersions(ctx context.Context, ruleSetID string) ([]models.ManagedRuleVersion, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id::text, managed_rule_set_id::text, version, COALESCE(source_uri, ''),
+		       COALESCE(local_path, ''), COALESCE(checksum_sha256, ''),
+		       ruleset_snapshot, released_at, created_at
+		FROM managed_rule_versions
+		WHERE managed_rule_set_id = $1
+		ORDER BY created_at DESC`, ruleSetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var versions []models.ManagedRuleVersion
+	for rows.Next() {
+		var version models.ManagedRuleVersion
+		if err := rows.Scan(&version.ID, &version.ManagedRuleSetID, &version.Version, &version.SourceURI, &version.LocalPath, &version.ChecksumSHA256, &version.RulesetSnapshot, &version.ReleasedAt, &version.CreatedAt); err != nil {
+			return nil, err
+		}
+		versions = append(versions, version)
+	}
+	return versions, rows.Err()
+}
+
+func (r *PostgresRepository) ActivateManagedRuleVersion(ctx context.Context, ruleSetID string, versionID string) (models.ActivateManagedRuleVersionResponse, error) {
+	var exists bool
+	if err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM managed_rule_versions
+			WHERE id = $1 AND managed_rule_set_id = $2
+		)`, versionID, ruleSetID).Scan(&exists); err != nil {
+		return models.ActivateManagedRuleVersionResponse{}, err
+	}
+	if !exists {
+		return models.ActivateManagedRuleVersionResponse{}, ErrNotFound
+	}
+	return models.ActivateManagedRuleVersionResponse{
+		ManagedRuleSetID:     ruleSetID,
+		ManagedRuleVersionID: versionID,
+		Status:               "manual_policy_publish_required",
+		Message:              "managed rule versions are not activated automatically; publish a policy referencing this version",
+	}, nil
 }
 
 func (r *PostgresRepository) ListEvents(ctx context.Context, limit int) ([]models.EventRef, error) {

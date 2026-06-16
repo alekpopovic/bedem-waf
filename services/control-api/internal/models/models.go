@@ -108,6 +108,38 @@ type GatewayPolicy struct {
 	PublishedAt     time.Time       `json:"published_at"`
 }
 
+type ManagedRuleSet struct {
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Provider    string          `json:"provider"`
+	Source      string          `json:"source"`
+	Description string          `json:"description,omitempty"`
+	LocalPath   string          `json:"local_path,omitempty"`
+	Enabled     bool            `json:"enabled"`
+	Metadata    json.RawMessage `json:"metadata,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+}
+
+type ManagedRuleVersion struct {
+	ID               string          `json:"id"`
+	ManagedRuleSetID string          `json:"managed_rule_set_id"`
+	Version          string          `json:"version"`
+	SourceURI        string          `json:"source_uri,omitempty"`
+	LocalPath        string          `json:"local_path,omitempty"`
+	ChecksumSHA256   string          `json:"checksum_sha256"`
+	RulesetSnapshot  json.RawMessage `json:"ruleset_snapshot,omitempty"`
+	ReleasedAt       *time.Time      `json:"released_at,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+}
+
+type ActivateManagedRuleVersionResponse struct {
+	ManagedRuleSetID     string `json:"managed_rule_set_id"`
+	ManagedRuleVersionID string `json:"managed_rule_version_id"`
+	Status               string `json:"status"`
+	Message              string `json:"message"`
+}
+
 type EventRef struct {
 	ID         string          `json:"id"`
 	TenantID   string          `json:"tenant_id"`

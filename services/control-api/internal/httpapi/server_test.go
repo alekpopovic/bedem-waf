@@ -302,6 +302,31 @@ func TestEventsAPIDateRangeValidation(t *testing.T) {
 	}
 }
 
+func TestManagedRuleSetEndpoints(t *testing.T) {
+	handler := testServer(t).Routes()
+
+	listReq := authedRequest(http.MethodGet, "/v1/managed-rule-sets", bytes.NewBuffer(nil))
+	listRec := httptest.NewRecorder()
+	handler.ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list sets status = %d, want 200: %s", listRec.Code, listRec.Body.String())
+	}
+
+	versionsReq := authedRequest(http.MethodGet, "/v1/managed-rule-sets/mrs-1/versions", bytes.NewBuffer(nil))
+	versionsRec := httptest.NewRecorder()
+	handler.ServeHTTP(versionsRec, versionsReq)
+	if versionsRec.Code != http.StatusOK {
+		t.Fatalf("list versions status = %d, want 200: %s", versionsRec.Code, versionsRec.Body.String())
+	}
+
+	activateReq := authedRequest(http.MethodPost, "/v1/managed-rule-sets/mrs-1/versions/mrv-1/activate", bytes.NewBuffer(nil))
+	activateRec := httptest.NewRecorder()
+	handler.ServeHTTP(activateRec, activateReq)
+	if activateRec.Code != http.StatusAccepted {
+		t.Fatalf("activate status = %d, want 202: %s", activateRec.Code, activateRec.Body.String())
+	}
+}
+
 func testServer(t *testing.T) *Server {
 	t.Helper()
 	return NewServer(newFakeRepo(), &fakeEventStore{}, auth.NewStaticBearer("test-admin-key"), auth.NewStaticBearer("test-gateway-key"), nil)
@@ -336,6 +361,7 @@ type fakeRepo struct {
 	apps     []models.App
 	policies map[string]models.Policy
 	versions []models.GatewayPolicy
+	ruleSets []models.ManagedRuleSet
 }
 
 func newFakeRepo() *fakeRepo {
@@ -348,6 +374,16 @@ func newFakeRepo() *fakeRepo {
 			Origins: []models.Origin{{Name: "primary", Scheme: "http", Host: "origin.local", Port: 9000, URL: "http://origin.local:9000"}},
 		}},
 		policies: make(map[string]models.Policy),
+		ruleSets: []models.ManagedRuleSet{{
+			ID:        "mrs-1",
+			Name:      "OWASP CRS Local",
+			Provider:  "owasp",
+			Source:    "local",
+			LocalPath: "/rules/owasp-crs",
+			Enabled:   true,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}},
 	}
 }
 
@@ -488,6 +524,38 @@ func (f *fakeRepo) GetGatewayPolicyByHostname(_ context.Context, hostname string
 		}
 	}
 	return models.GatewayPolicy{}, db.ErrNotFound
+}
+
+func (f *fakeRepo) ListManagedRuleSets(context.Context) ([]models.ManagedRuleSet, error) {
+	return f.ruleSets, nil
+}
+
+func (f *fakeRepo) ListManagedRuleVersions(_ context.Context, ruleSetID string) ([]models.ManagedRuleVersion, error) {
+	if ruleSetID != "mrs-1" {
+		return nil, nil
+	}
+	return []models.ManagedRuleVersion{{
+		ID:               "mrv-1",
+		ManagedRuleSetID: "mrs-1",
+		Version:          "4.0.0-local",
+		SourceURI:        "local",
+		LocalPath:        "/rules/owasp-crs",
+		ChecksumSHA256:   "abc123",
+		RulesetSnapshot:  []byte(`{"files":["REQUEST-901.conf"]}`),
+		CreatedAt:        time.Now().UTC(),
+	}}, nil
+}
+
+func (f *fakeRepo) ActivateManagedRuleVersion(_ context.Context, ruleSetID string, versionID string) (models.ActivateManagedRuleVersionResponse, error) {
+	if ruleSetID != "mrs-1" || versionID != "mrv-1" {
+		return models.ActivateManagedRuleVersionResponse{}, db.ErrNotFound
+	}
+	return models.ActivateManagedRuleVersionResponse{
+		ManagedRuleSetID:     ruleSetID,
+		ManagedRuleVersionID: versionID,
+		Status:               "manual_policy_publish_required",
+		Message:              "publish a policy to use this version",
+	}, nil
 }
 
 func (f *fakeRepo) ListEvents(context.Context, int) ([]models.EventRef, error) {

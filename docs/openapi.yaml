@@ -17,6 +17,7 @@ tags:
   - name: Tenants
   - name: Apps
   - name: Policies
+  - name: Managed Rules
   - name: Gateway
   - name: Events
 security:
@@ -372,6 +373,77 @@ paths:
         "404":
           $ref: "#/components/responses/Error"
 
+  /v1/managed-rule-sets:
+    get:
+      tags: [Managed Rules]
+      summary: List managed rule sets
+      security:
+        - AdminBearerAuth: []
+      responses:
+        "200":
+          description: Managed rule set list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [managed_rule_sets]
+                properties:
+                  managed_rule_sets:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ManagedRuleSet"
+        "401":
+          $ref: "#/components/responses/Error"
+
+  /v1/managed-rule-sets/{id}/versions:
+    get:
+      tags: [Managed Rules]
+      summary: List versions for a managed rule set
+      security:
+        - AdminBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ManagedRuleSetID"
+      responses:
+        "200":
+          description: Managed rule version list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [versions]
+                properties:
+                  versions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ManagedRuleVersion"
+        "401":
+          $ref: "#/components/responses/Error"
+
+  /v1/managed-rule-sets/{id}/versions/{version_id}/activate:
+    post:
+      tags: [Managed Rules]
+      summary: Placeholder for managed rule version activation
+      description: |
+        MVP placeholder. The endpoint verifies that the managed rule version
+        exists and returns a manual-publish-required status. It does not change
+        active gateway policies.
+      security:
+        - AdminBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ManagedRuleSetID"
+        - $ref: "#/components/parameters/ManagedRuleVersionID"
+      responses:
+        "202":
+          description: Managed rule version exists; publish a policy manually.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivateManagedRuleVersionResponse"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+
   /v1/gateway/apps/{hostname}/policy:
     get:
       tags: [Gateway]
@@ -485,6 +557,20 @@ components:
         type: string
         pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
       example: app.example.local
+    ManagedRuleSetID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      example: mrs-1
+    ManagedRuleVersionID:
+      name: version_id
+      in: path
+      required: true
+      schema:
+        type: string
+      example: mrv-1
     RequestID:
       name: request_id
       in: path
@@ -812,6 +898,80 @@ components:
         created_at:
           type: string
           format: date-time
+
+    ManagedRuleSet:
+      type: object
+      required: [id, name, provider, source, enabled, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          examples: [OWASP CRS Local]
+        provider:
+          type: string
+          examples: [owasp]
+        source:
+          type: string
+          examples: [local]
+        description:
+          type: string
+        local_path:
+          type: string
+          examples: [/rules/owasp-crs-local]
+        enabled:
+          type: boolean
+        metadata:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ManagedRuleVersion:
+      type: object
+      required: [id, managed_rule_set_id, version, checksum_sha256, created_at]
+      properties:
+        id:
+          type: string
+        managed_rule_set_id:
+          type: string
+        version:
+          type: string
+          examples: [4.0.0-local]
+        source_uri:
+          type: string
+          examples: [local:///rules/owasp-crs-local]
+        local_path:
+          type: string
+        checksum_sha256:
+          type: string
+        ruleset_snapshot:
+          type: object
+          additionalProperties: true
+        released_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    ActivateManagedRuleVersionResponse:
+      type: object
+      required: [managed_rule_set_id, managed_rule_version_id, status, message]
+      properties:
+        managed_rule_set_id:
+          type: string
+        managed_rule_version_id:
+          type: string
+        status:
+          type: string
+          examples: [manual_policy_publish_required]
+        message:
+          type: string
 
     GatewayPolicy:
       type: object

@@ -173,6 +173,14 @@ Fetch the gateway-ready policy by hostname using the gateway key:
 curl -s "$API/v1/gateway/apps/app.example.local/policy" -H "$GATEWAY_AUTH"
 ```
 
+List managed rule sets and local versions:
+
+```bash
+curl -s "$API/v1/managed-rule-sets" -H "$AUTH"
+curl -s "$API/v1/managed-rule-sets/<id>/versions" -H "$AUTH"
+curl -s -X POST "$API/v1/managed-rule-sets/<id>/versions/<version_id>/activate" -H "$AUTH"
+```
+
 Search event references:
 
 ```bash

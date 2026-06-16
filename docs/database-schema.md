@@ -98,6 +98,9 @@ Important columns:
 
 - `name`: Unique rule set name.
 - `provider`: Source or maintainer.
+- `source`: MVP source type such as `local`.
+- `local_path`: Local mounted directory scanned by the worker.
+- `enabled`: Whether the catalog entry is available for future policy use.
 - `description` and `metadata`: Operator-facing details.
 
 ### managed_rule_versions
@@ -109,6 +112,7 @@ Important columns:
 - `managed_rule_set_id`: Parent rule set.
 - `version`: Provider version string.
 - `source_uri`: Where the rules were obtained.
+- `local_path`: Local path used by the MVP worker scanner.
 - `checksum_sha256`: Integrity metadata.
 - `ruleset_snapshot`: JSONB description of the bundled rules.
 - `released_at`: Upstream release timestamp when known.
