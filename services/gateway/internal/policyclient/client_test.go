@@ -226,6 +226,8 @@ func writePolicy(t *testing.T, w http.ResponseWriter) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
+		"id":                "policy-1",
+		"name":              "Demo policy",
 		"tenant_id":         "tenant-1",
 		"app_id":            "app-1",
 		"policy_id":         "policy-1",

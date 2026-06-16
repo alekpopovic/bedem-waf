@@ -118,7 +118,7 @@ Local URLs:
 - Gateway: http://localhost:8080
 - Control API: http://localhost:8081
 - Demo origin through NGINX: http://localhost:9000
-- Demo app hostname through gateway: `demo.local`
+- Demo app hostname through gateway: `demo.localhost`
 
 Optional observability profile:
 
@@ -133,23 +133,23 @@ docker compose --env-file ../.env.example --profile observability up -d promethe
 Seed the demo tenant, app, policy, and published gateway policy:
 
 ```bash
-./scripts/seed-demo.sh
+./scripts/demo-reset.sh
 ```
 
 Try the request paths:
 
 ```bash
 # Allowed
-curl -i -H 'Host: demo.local' http://localhost:8080/
+curl -i -H 'Host: demo.localhost' http://localhost:8080/
 
 # Blocked by custom rule
-curl -i -H 'Host: demo.local' http://localhost:8080/admin
+curl -i -H 'Host: demo.localhost' http://localhost:8080/admin
 
 # Rate limited after 3 requests within 60 seconds
-curl -i -H 'Host: demo.local' http://localhost:8080/login
+curl -i -H 'Host: demo.localhost' http://localhost:8080/login
 
 # Echo through Gateway -> NGINX origin -> demo app
-curl -i -X POST -H 'Host: demo.local' -H 'Content-Type: application/json' \
+curl -i -X POST -H 'Host: demo.localhost' -H 'Content-Type: application/json' \
   -d '{"hello":"bedemwaf"}' http://localhost:8080/api/echo
 ```
 
@@ -159,6 +159,9 @@ Follow logs or stop the stack:
 ./scripts/dev-logs.sh
 ./scripts/dev-down.sh
 ```
+
+See the full [Demo Flow](docs/demo.md) for count mode, block mode, rate-limit,
+event search, and dashboard walkthrough steps.
 
 ## Local Quality Checks
 
@@ -217,6 +220,7 @@ Next implementation steps:
 - [Control Plane](docs/control-plane.md)
 - [Request Flow](docs/request-flow.md)
 - [Deployment Model](docs/deployment-model.md)
+- [Demo Flow](docs/demo.md)
 - [Threat Model](docs/threat-model.md)
 - [Local Development](docs/local-development.md)
 - [Policy Model](docs/policy-model.md)

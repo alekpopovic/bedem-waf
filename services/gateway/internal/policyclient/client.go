@@ -73,7 +73,6 @@ func (c *Client) FetchPolicy(ctx context.Context, hostname string) (*policy.App,
 	}
 	var remote gatewayPolicy
 	decoder := json.NewDecoder(resp.Body)
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&remote); err != nil {
 		return nil, err
 	}

@@ -10,7 +10,7 @@ import (
 
 func main() {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
 			"service": "bedemwaf-demo-app",
 			"message": "request reached the demo application",

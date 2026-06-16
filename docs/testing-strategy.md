@@ -155,7 +155,7 @@ End-to-end tests should run against the local Docker Compose stack:
 Baseline E2E flow:
 
 1. Start the stack with `./scripts/dev-up.sh`.
-2. Seed a demo tenant, app, and policy with `./scripts/seed-demo.sh`.
+2. Seed a demo tenant, app, and policy with `./scripts/demo-seed.sh`.
 3. Send an allowed request to `/`.
 4. Send a request matching a harmless block rule such as `/admin` or `/blocked-test`.
 5. Send a rate-limited sequence to `/login`.
@@ -234,8 +234,8 @@ Local stack smoke test:
 
 ```sh
 ./scripts/dev-up.sh
-./scripts/seed-demo.sh
-curl -i -H 'Host: demo.local' http://localhost:8080/
-curl -i -H 'Host: demo.local' http://localhost:8080/admin
+./scripts/demo-seed.sh
+curl -i -H 'Host: demo.localhost' http://localhost:8080/
+curl -i -H 'Host: demo.localhost' http://localhost:8080/admin
 ./scripts/dev-down.sh
 ```
