@@ -331,11 +331,15 @@ func (d *Dispatcher) run() {
 func (d *Dispatcher) write(event Event) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	sent := false
 	for _, sink := range d.sinks {
 		if err := sink.Write(ctx, event); err != nil {
 			d.logger.Warn("audit_event_send_failed", "error", err, "request_id", event.RequestID)
 			continue
 		}
+		sent = true
 	}
-	d.metrics.eventsSentTotal.Add(1)
+	if sent {
+		d.metrics.eventsSentTotal.Add(1)
+	}
 }

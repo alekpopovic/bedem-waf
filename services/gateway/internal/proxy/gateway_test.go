@@ -474,6 +474,63 @@ func TestBlockModeBlocksCustomRule(t *testing.T) {
 	}
 }
 
+func TestRateLimitCountDoesNotSuppressLaterCustomBlock(t *testing.T) {
+	gateway := testGatewayWithOptions(t, testGatewayOptions{
+		mode:      "block",
+		originURL: "http://origin.local",
+		limiter:   fakeLimiter{decision: decision.Count("rate_limit", "rate_limit:count-only")},
+		waf:       waf.AllowEngine{},
+		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			t.Fatal("origin should not be called when later custom rule blocks")
+			return nil, nil
+		}),
+		auditOut: io.Discard,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.local/admin", nil)
+	req.RemoteAddr = "198.51.100.10:12345"
+	rec := httptest.NewRecorder()
+
+	gateway.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 from custom rule despite rate-limit count", rec.Code)
+	}
+}
+
+func TestTerminalAllowBypassesDefaultBlock(t *testing.T) {
+	gateway := testGatewayWithOptions(t, testGatewayOptions{
+		mode:          "block",
+		defaultAction: "block",
+		originURL:     "http://origin.local",
+		limiter:       ratelimit.NoopLimiter{},
+		waf:           waf.AllowEngine{},
+		customRules: []config.CustomRuleConfig{{
+			ID:            "rule-safe-allow",
+			Name:          "Allow safe path",
+			Priority:      100,
+			Enabled:       true,
+			Action:        "allow",
+			TerminalAllow: true,
+			When:          config.ConditionConfig{PathStartsWith: "/safe"},
+		}},
+		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return textResponse(req, http.StatusOK, "ok")
+		}),
+		auditOut: io.Discard,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.local/safe", nil)
+	req.RemoteAddr = "198.51.100.10:12345"
+	rec := httptest.NewRecorder()
+
+	gateway.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 from terminal allow despite default block", rec.Code)
+	}
+}
+
 func testGateway(t *testing.T, mode string, originURL string, limiter ratelimit.Limiter) *Gateway {
 	return testGatewayWithOptions(t, testGatewayOptions{
 		mode:      mode,
@@ -486,6 +543,7 @@ func testGateway(t *testing.T, mode string, originURL string, limiter ratelimit.
 
 type testGatewayOptions struct {
 	mode           string
+	defaultAction  string
 	originURL      string
 	limiter        ratelimit.Limiter
 	waf            waf.Engine
@@ -493,6 +551,7 @@ type testGatewayOptions struct {
 	auditOut       io.Writer
 	bodyLimit      int64
 	trustedProxies []string
+	customRules    []config.CustomRuleConfig
 }
 
 func testGatewayWithOptions(t *testing.T, opts testGatewayOptions) *Gateway {
@@ -500,6 +559,22 @@ func testGatewayWithOptions(t *testing.T, opts testGatewayOptions) *Gateway {
 	bodyLimit := opts.bodyLimit
 	if bodyLimit == 0 {
 		bodyLimit = 1 << 20
+	}
+	defaultAction := opts.defaultAction
+	if defaultAction == "" {
+		defaultAction = "allow"
+	}
+	customRules := opts.customRules
+	if customRules == nil {
+		customRules = []config.CustomRuleConfig{{
+			ID:         "rule-admin",
+			Name:       "Admin block",
+			Priority:   100,
+			Enabled:    true,
+			Action:     "block",
+			StatusCode: 403,
+			When:       config.ConditionConfig{PathStartsWith: "/admin"},
+		}}
 	}
 	cfg := config.Config{
 		Server: config.ServerConfig{ListenAddr: ":8080", TrustedProxies: opts.trustedProxies},
@@ -516,17 +591,9 @@ func testGatewayWithOptions(t *testing.T, opts testGatewayOptions) *Gateway {
 			Origin:    config.OriginConfig{URL: opts.originURL},
 			Policy: config.PolicyConfig{
 				Mode:          opts.mode,
-				DefaultAction: "allow",
+				DefaultAction: defaultAction,
 				IPBlocklist:   []string{"203.0.113.10/32"},
-				CustomRules: []config.CustomRuleConfig{{
-					ID:         "rule-admin",
-					Name:       "Admin block",
-					Priority:   100,
-					Enabled:    true,
-					Action:     "block",
-					StatusCode: 403,
-					When:       config.ConditionConfig{PathStartsWith: "/admin"},
-				}},
+				CustomRules:   customRules,
 				RateLimits: []config.RateLimitConfig{{
 					ID:            "rl-test",
 					Name:          "Test limit",

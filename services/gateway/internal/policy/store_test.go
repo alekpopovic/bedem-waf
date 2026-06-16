@@ -77,6 +77,33 @@ func TestCIDRIPBlocklist(t *testing.T) {
 	}
 }
 
+func TestIPAllowlistBlocksAddressesOutsideList(t *testing.T) {
+	store, err := NewStore([]config.AppConfig{{
+		ID:        "app-local",
+		Hostnames: []string{"example.local"},
+		Origin:    config.OriginConfig{URL: "http://localhost:9000"},
+		Policy: config.PolicyConfig{
+			Mode:          "block",
+			DefaultAction: "allow",
+			IPAllowlist:   []string{"198.51.100.0/24"},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	app, _ := store.MatchHost("example.local")
+
+	got := app.EvaluateIP(netip.MustParseAddr("198.51.100.10"))
+	if got.Action != decision.ActionAllow {
+		t.Fatalf("allowlisted IP action = %q, want allow", got.Action)
+	}
+
+	got = app.EvaluateIP(netip.MustParseAddr("203.0.113.10"))
+	if got.Action != decision.ActionBlock || got.Reason != "ip_allowlist" {
+		t.Fatalf("outside allowlist decision = %+v, want ip_allowlist block", got)
+	}
+}
+
 func TestCountModeDoesNotEnforceBlockDecision(t *testing.T) {
 	block := decision.Block("ip_blocklist", "ip_blocklist:203.0.113.10/32")
 	if got := decision.EnforcedAction(decision.ModeCount, block); got != decision.ActionCount {

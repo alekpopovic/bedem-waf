@@ -49,6 +49,9 @@ func TestCacheMiss(t *testing.T) {
 	if !got.Found {
 		t.Fatalf("lookup found = false, want true")
 	}
+	if got.App.PolicyID != "policy-1" || got.App.PolicyVersion != "version-1" {
+		t.Fatalf("remote policy identifiers = %q/%q, want policy-1/version-1", got.App.PolicyID, got.App.PolicyVersion)
+	}
 	if calls.Load() != 1 {
 		t.Fatalf("control api calls = %d, want 1", calls.Load())
 	}

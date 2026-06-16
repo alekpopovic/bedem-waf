@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"sync"
 	"testing"
@@ -55,6 +56,24 @@ func TestAsyncDispatcherDropsWhenQueueFull(t *testing.T) {
 	defer cancel()
 	if err := dispatcher.Shutdown(ctx); err != nil {
 		t.Fatalf("Shutdown() error = %v", err)
+	}
+}
+
+func TestDispatcherDoesNotCountFailedSinkAsSent(t *testing.T) {
+	dispatcher, err := NewDispatcher(2, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)), failingSink{})
+	if err != nil {
+		t.Fatalf("NewDispatcher() error = %v", err)
+	}
+
+	dispatcher.Log(Event{RequestID: "req-fail", Action: "allow"})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := dispatcher.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+
+	if got := dispatcher.Metrics().EventsSentTotal(); got != 0 {
+		t.Fatalf("events_sent_total = %d, want 0 when sink fails", got)
 	}
 }
 
@@ -125,6 +144,12 @@ type memorySink struct {
 func (s *memorySink) Write(_ context.Context, event Event) error {
 	s.events = append(s.events, event)
 	return nil
+}
+
+type failingSink struct{}
+
+func (failingSink) Write(context.Context, Event) error {
+	return errors.New("sink down")
 }
 
 type blockingSink struct {

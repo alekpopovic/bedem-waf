@@ -262,7 +262,7 @@ func (p gatewayPolicy) toApp(hostname string) (*policy.App, error) {
 	if err != nil {
 		return nil, err
 	}
-	return policy.NewApp(config.AppConfig{
+	app, err := policy.NewApp(config.AppConfig{
 		ID:        p.AppID,
 		TenantID:  p.TenantID,
 		Hostnames: []string{policy.NormalizeHost(hostname)},
@@ -275,6 +275,12 @@ func (p gatewayPolicy) toApp(hostname string) (*policy.App, error) {
 			RateLimits:    rateLimits,
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+	app.PolicyID = p.PolicyID
+	app.PolicyVersion = p.PolicyVersionID
+	return app, nil
 }
 
 func decodeIPSets(raw json.RawMessage) (map[string][]string, error) {

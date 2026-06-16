@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -131,6 +132,11 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		writeError(w, r, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+		return false
+	}
+	var extra struct{}
+	if err := decoder.Decode(&extra); err != io.EOF {
+		writeError(w, r, http.StatusBadRequest, "invalid_json", "request body must contain a single JSON object")
 		return false
 	}
 	return true

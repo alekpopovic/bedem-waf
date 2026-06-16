@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -529,20 +530,7 @@ func validatePolicySnapshot(snapshot json.RawMessage) error {
 	if err := validateJSON(snapshot, "snapshot"); err != nil {
 		return err
 	}
-	var decoded struct {
-		Mode        string              `json:"mode"`
-		Rules       []map[string]string `json:"rules"`
-		IPBlocks    []string            `json:"ip_blocklist"`
-		IPSets      map[string][]string `json:"ip_sets"`
-		CustomRules []struct {
-			Action string `json:"action"`
-		} `json:"custom_rules"`
-		RateLimits []struct {
-			Action        string `json:"action"`
-			Limit         int    `json:"limit"`
-			WindowSeconds int    `json:"window_seconds"`
-		} `json:"rate_limits"`
-	}
+	var decoded policySnapshot
 	if err := json.Unmarshal(snapshot, &decoded); err != nil {
 		return err
 	}
@@ -571,23 +559,169 @@ func validatePolicySnapshot(snapshot json.RawMessage) error {
 		}
 	}
 	for _, rule := range decoded.CustomRules {
-		if rule.Action != "" {
-			if err := validateAction(rule.Action); err != nil {
-				return err
-			}
+		if strings.TrimSpace(rule.ID) == "" {
+			return errors.New("custom rule id is required")
+		}
+		if strings.TrimSpace(rule.Name) == "" {
+			return errors.New("custom rule name is required")
+		}
+		switch rule.Action {
+		case "allow", "count", "block":
+		default:
+			return errors.New("custom rule action must be allow, count, or block")
+		}
+		if err := validatePolicyCondition(rule.When, decoded.IPSets); err != nil {
+			return err
 		}
 	}
 	for _, rule := range decoded.RateLimits {
-		if rule.Action != "" {
-			if err := validateAction(rule.Action); err != nil {
-				return err
-			}
+		if strings.TrimSpace(rule.ID) == "" {
+			return errors.New("rate limit id is required")
+		}
+		if strings.TrimSpace(rule.Name) == "" {
+			return errors.New("rate limit name is required")
+		}
+		switch rule.Action {
+		case "count", "block":
+		default:
+			return errors.New("rate limit action must be count or block")
 		}
 		if rule.Limit <= 0 || rule.WindowSeconds <= 0 {
 			return errors.New("rate limit values must be positive")
 		}
+		switch rule.KeyType {
+		case "ip", "host", "path", "header", "api_key_placeholder":
+		default:
+			return errors.New("rate limit key_type is invalid")
+		}
+		if rule.KeyType == "header" && strings.TrimSpace(rule.KeyHeader) == "" {
+			return errors.New("rate limit key_header is required for header key_type")
+		}
+		if hasPolicyCondition(rule.Match) {
+			if err := validatePolicyCondition(rule.Match, decoded.IPSets); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+type policySnapshot struct {
+	Mode        string                        `json:"mode"`
+	Rules       []map[string]string           `json:"rules"`
+	IPBlocks    []string                      `json:"ip_blocklist"`
+	IPSets      map[string][]string           `json:"ip_sets"`
+	CustomRules []policyCustomRuleSnapshot    `json:"custom_rules"`
+	RateLimits  []policyRateLimitRuleSnapshot `json:"rate_limits"`
+}
+
+type policyCustomRuleSnapshot struct {
+	ID     string                  `json:"id"`
+	Name   string                  `json:"name"`
+	Action string                  `json:"action"`
+	When   policyConditionSnapshot `json:"when"`
+}
+
+type policyRateLimitRuleSnapshot struct {
+	ID            string                  `json:"id"`
+	Name          string                  `json:"name"`
+	Match         policyConditionSnapshot `json:"match"`
+	KeyType       string                  `json:"key_type"`
+	KeyHeader     string                  `json:"key_header"`
+	Limit         int                     `json:"limit"`
+	WindowSeconds int                     `json:"window_seconds"`
+	Action        string                  `json:"action"`
+}
+
+type policyConditionSnapshot struct {
+	All                []policyConditionSnapshot `json:"all"`
+	Any                []policyConditionSnapshot `json:"any"`
+	MethodEquals       string                    `json:"method_equals"`
+	PathEquals         string                    `json:"path_equals"`
+	PathStartsWith     string                    `json:"path_starts_with"`
+	HostEquals         string                    `json:"host_equals"`
+	HeaderContains     *policyHeaderMatch        `json:"header_contains"`
+	HeaderEquals       *policyHeaderMatch        `json:"header_equals"`
+	QueryParamContains *policyQueryParamMatch    `json:"query_parameter_contains"`
+	ClientIPInIPSet    string                    `json:"client_ip_in_ip_set"`
+	ClientIPNotInIPSet string                    `json:"client_ip_not_in_ip_set"`
+}
+
+type policyHeaderMatch struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type policyQueryParamMatch struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+func validatePolicyCondition(value policyConditionSnapshot, ipSets map[string][]string) error {
+	operators := 0
+	check := func(ok bool) {
+		if ok {
+			operators++
+		}
+	}
+	check(len(value.All) > 0)
+	check(len(value.Any) > 0)
+	check(value.MethodEquals != "")
+	check(value.PathEquals != "")
+	check(value.PathStartsWith != "")
+	check(value.HostEquals != "")
+	check(value.HeaderContains != nil)
+	check(value.HeaderEquals != nil)
+	check(value.QueryParamContains != nil)
+	check(value.ClientIPInIPSet != "")
+	check(value.ClientIPNotInIPSet != "")
+	if operators != 1 {
+		return fmt.Errorf("policy condition must contain exactly one operator, got %d", operators)
+	}
+	for _, child := range value.All {
+		if err := validatePolicyCondition(child, ipSets); err != nil {
+			return err
+		}
+	}
+	for _, child := range value.Any {
+		if err := validatePolicyCondition(child, ipSets); err != nil {
+			return err
+		}
+	}
+	if value.HeaderContains != nil && (strings.TrimSpace(value.HeaderContains.Name) == "" || value.HeaderContains.Value == "") {
+		return errors.New("header_contains requires name and value")
+	}
+	if value.HeaderEquals != nil && (strings.TrimSpace(value.HeaderEquals.Name) == "" || value.HeaderEquals.Value == "") {
+		return errors.New("header_equals requires name and value")
+	}
+	if value.QueryParamContains != nil && (strings.TrimSpace(value.QueryParamContains.Name) == "" || value.QueryParamContains.Value == "") {
+		return errors.New("query_parameter_contains requires name and value")
+	}
+	if value.ClientIPInIPSet != "" {
+		if _, ok := ipSets[value.ClientIPInIPSet]; !ok {
+			return fmt.Errorf("unknown ip set %q", value.ClientIPInIPSet)
+		}
+	}
+	if value.ClientIPNotInIPSet != "" {
+		if _, ok := ipSets[value.ClientIPNotInIPSet]; !ok {
+			return fmt.Errorf("unknown ip set %q", value.ClientIPNotInIPSet)
+		}
+	}
+	return nil
+}
+
+func hasPolicyCondition(value policyConditionSnapshot) bool {
+	return len(value.All) > 0 ||
+		len(value.Any) > 0 ||
+		value.MethodEquals != "" ||
+		value.PathEquals != "" ||
+		value.PathStartsWith != "" ||
+		value.HostEquals != "" ||
+		value.HeaderContains != nil ||
+		value.HeaderEquals != nil ||
+		value.QueryParamContains != nil ||
+		value.ClientIPInIPSet != "" ||
+		value.ClientIPNotInIPSet != ""
 }
 
 func (s *Server) validateUpdatePolicy(w http.ResponseWriter, r *http.Request, req *models.UpdatePolicyRequest) bool {

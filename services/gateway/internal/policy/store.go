@@ -18,6 +18,8 @@ import (
 type App struct {
 	ID              string
 	TenantID        string
+	PolicyID        string
+	PolicyVersion   string
 	Hostnames       []string
 	Origin          *url.URL
 	Mode            decision.Mode
@@ -242,6 +244,14 @@ func (a *App) EvaluateIP(clientIP netip.Addr) decision.Decision {
 		if prefix.Contains(clientIP) {
 			return decision.Block("ip_blocklist", "ip_blocklist:"+prefix.String())
 		}
+	}
+	if len(a.IPAllowlist) > 0 {
+		for _, prefix := range a.IPAllowlist {
+			if prefix.Contains(clientIP) {
+				return decision.Allow()
+			}
+		}
+		return decision.Block("ip_allowlist", "ip_allowlist")
 	}
 	return decision.Allow()
 }

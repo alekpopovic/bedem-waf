@@ -159,6 +159,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	app := lookup.App
 	event.TenantID = app.TenantID
 	event.AppID = app.ID
+	event.PolicyID = app.PolicyID
+	event.PolicyVersion = app.PolicyVersion
 	event.Mode = string(app.Mode)
 
 	bodyPreview, bodyExceeded, err := g.prepareRequestBody(r)
@@ -174,8 +176,20 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	final := app.EvaluateIP(clientIP)
+	var observedCount *decision.Decision
+	rememberCount := func(got decision.Decision) {
+		if got.Action == decision.ActionCount && observedCount == nil {
+			copy := got
+			observedCount = &copy
+		}
+	}
 	if final.Action == decision.ActionAllow {
-		final = g.evaluateRateLimits(r.Context(), r, app, clientIP.String(), host)
+		rateLimitDecision := g.evaluateRateLimits(r.Context(), r, app, clientIP.String(), host)
+		if rateLimitDecision.Action == decision.ActionRateLimit || rateLimitDecision.Action == decision.ActionBlock || rateLimitDecision.Action == decision.ActionChallenge {
+			final = rateLimitDecision
+		} else {
+			rememberCount(rateLimitDecision)
+		}
 	}
 	if final.Action == decision.ActionAllow && bodyExceeded {
 		final = decision.Block("request_body_limit_exceeded", "waf:request_body_limit")
@@ -192,9 +206,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if customDecision.Action == decision.ActionBlock || customDecision.Reason == "custom_rule_allow" {
 			final = customDecision
 		} else if customDecision.Action == decision.ActionCount {
-			final = customDecision
+			rememberCount(customDecision)
 		}
 	}
+	terminalAllow := final.Action == decision.ActionAllow && final.Reason == "custom_rule_allow"
 	if final.Action == decision.ActionAllow {
 		wafDecision, err := g.waf.InspectRequest(r.Context(), r, bodyPreview, waf.PolicyContext{
 			RequestID: requestID,
@@ -211,29 +226,19 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if wafDecision != nil {
-			final = *wafDecision
-		}
-	} else if final.Action == decision.ActionCount && final.Reason == "custom_rule" {
-		wafDecision, err := g.waf.InspectRequest(r.Context(), r, bodyPreview, waf.PolicyContext{
-			RequestID: requestID,
-			AppID:     app.ID,
-			Host:      host,
-			ClientIP:  clientIP.String(),
-			Mode:      app.Mode,
-		})
-		if err != nil {
-			event.Action = string(decision.ActionBlock)
-			event.Reason = "waf_error"
-			g.logger.Warn("waf_inspection_failed", "error", err, "app_id", app.ID, "request_id", requestID)
-			writeJSONError(recorder, http.StatusBadRequest, requestID, "waf inspection failed")
-			return
-		}
-		if wafDecision != nil && wafDecision.Action != decision.ActionAllow {
-			final = *wafDecision
+			if wafDecision.Action == decision.ActionBlock || wafDecision.Action == decision.ActionRateLimit || wafDecision.Action == decision.ActionChallenge {
+				final = *wafDecision
+				terminalAllow = false
+			} else {
+				rememberCount(*wafDecision)
+			}
 		}
 	}
-	if final.Action == decision.ActionAllow && app.DefaultAction == decision.ActionBlock {
+	if final.Action == decision.ActionAllow && !terminalAllow && app.DefaultAction == decision.ActionBlock {
 		final = decision.Block("default_action", "default_action")
+	}
+	if final.Action == decision.ActionAllow && observedCount != nil {
+		final = *observedCount
 	}
 
 	enforced := decision.EnforcedAction(app.Mode, final)
@@ -247,7 +252,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	event.Tags = final.Tags
 	event.AnomalyScore = final.AnomalyScore
 	if final.RateLimit != nil {
-		metrics.IncRateLimited()
+		if final.Action == decision.ActionRateLimit {
+			metrics.IncRateLimited()
+		}
 		event.RateLimit = &audit.RateLimit{
 			Limit:     final.RateLimit.Limit,
 			Remaining: final.RateLimit.Remaining,

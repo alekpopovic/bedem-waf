@@ -124,6 +124,19 @@ func TestRequestBodyLimitReturnsJSONError(t *testing.T) {
 	assertErrorShape(t, rec.Body.Bytes(), "invalid_json")
 }
 
+func TestDecodeJSONRejectsTrailingTokens(t *testing.T) {
+	handler := testServer(t).Routes()
+	req := authedRequest(http.MethodPost, "/v1/tenants", bytes.NewBufferString(`{"name":"Demo Tenant","slug":"demo"} {"extra":true}`))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	assertErrorShape(t, rec.Body.Bytes(), "invalid_json")
+}
+
 func TestCreateTenant(t *testing.T) {
 	handler := testServer(t).Routes()
 	body := bytes.NewBufferString(`{"name":"Demo Tenant","slug":"demo"}`)
@@ -154,6 +167,37 @@ func TestCreateAppValidatesHostnameAndOrigin(t *testing.T) {
 		"origin_url":"ftp://origin.local"
 	}`)
 	req := authedRequest(http.MethodPost, "/v1/apps", body)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	assertErrorShape(t, rec.Body.Bytes(), "invalid_request")
+}
+
+func TestCreatePolicyRejectsInvalidCustomRuleSnapshot(t *testing.T) {
+	handler := testServer(t).Routes()
+	body := bytes.NewBufferString(`{
+		"name":"Invalid Policy",
+		"mode":"count",
+		"snapshot":{
+			"mode":"count",
+			"custom_rules":[{
+				"id":"rule-invalid",
+				"name":"Invalid",
+				"action":"block",
+				"when":{
+					"all":[
+						{"path_starts_with":"/admin"},
+						{"client_ip_not_in_ip_set":"missing_ips"}
+					]
+				}
+			}]
+		}
+	}`)
+	req := authedRequest(http.MethodPost, "/v1/apps/app-1/policies", body)
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -249,8 +293,8 @@ func TestPublishFlowCreatesImmutableVersionAndActiveGatewayPolicy(t *testing.T) 
 		"snapshot":{
 			"mode":"count",
 			"ip_sets":{"office":["198.51.100.0/24"]},
-			"custom_rules":[{"id":"rule-admin","action":"block"}],
-			"rate_limits":[{"id":"rl-login","action":"block","limit":20,"window_seconds":60}],
+			"custom_rules":[{"id":"rule-admin","name":"Admin block","action":"block","when":{"path_starts_with":"/admin"}}],
+			"rate_limits":[{"id":"rl-login","name":"Login limit","action":"block","key_type":"ip","limit":20,"window_seconds":60}],
 			"waf":{"enabled":true,"engine":"coraza"}
 		}
 	}`)
@@ -277,7 +321,7 @@ func TestPublishFlowCreatesImmutableVersionAndActiveGatewayPolicy(t *testing.T) 
 		"expected_updated_at": "` + policy.UpdatedAt.Format(time.RFC3339Nano) + `",
 		"snapshot": {
 			"mode":"block",
-			"custom_rules":[{"id":"rule-after-publish","action":"block"}],
+			"custom_rules":[{"id":"rule-after-publish","name":"After publish","action":"block","when":{"path_starts_with":"/after"}}],
 			"waf":{"enabled":true}
 		}
 	}`)
