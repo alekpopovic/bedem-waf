@@ -8,4 +8,4 @@ if [ ! -f "$env_file" ]; then
 fi
 
 cd "$root_dir/deployments"
-BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose --env-file "$env_file" up -d --build
+docker compose --env-file "$env_file" logs -f "$@"

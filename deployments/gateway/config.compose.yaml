@@ -1,0 +1,27 @@
+server:
+  listen_addr: ":8080"
+  trusted_proxies: []
+
+redis:
+  enabled: true
+  addr: "redis:6379"
+  fail_mode: "open"
+
+clickhouse:
+  enabled: true
+  url: "http://clickhouse:8123"
+  database: "bedemwaf"
+  username: "bedemwaf"
+  password: "${CLICKHOUSE_PASSWORD}"
+
+control_api:
+  enabled: true
+  base_url: "http://control-api:8081"
+  gateway_api_key: "${BEDEMWAF_GATEWAY_API_KEY}"
+  cache_ttl_seconds: 10
+  fail_behavior: "use_stale_then_fail_open"
+
+waf:
+  enabled: false
+  request_body_limit_bytes: 1048576
+  debug_body_preview: false

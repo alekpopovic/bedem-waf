@@ -54,7 +54,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusNotFound, "not_found", "route not found")
 	})
-	return requestIDMiddleware(loggingMiddleware(s.logger, secureHeaders(mux)))
+	return requestIDMiddleware(loggingMiddleware(s.logger, devCORSMiddleware(secureHeaders(mux))))
 }
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {

@@ -104,36 +104,63 @@ cp .env.example .env
 ./scripts/dev-up.sh
 ```
 
-The local Compose stack lives in `deployments/` and currently starts Postgres,
-Redis, and ClickHouse. Gateway, control API, and worker service entries are
-included as placeholders and will be wired to Dockerfiles once each service has
-real runtime behavior.
+The local Compose stack lives in `deployments/` and starts Postgres, Redis,
+ClickHouse, Control API, Gateway, Worker, Dashboard, NGINX origin, and a tiny
+demo application.
 
-Run the minimal Go services directly:
+Local URLs:
+
+- Dashboard: http://localhost:3000
+- Gateway: http://localhost:8080
+- Control API: http://localhost:8081
+- Demo origin through NGINX: http://localhost:9000
+- Demo app hostname through gateway: `demo.local`
+
+Seed the demo tenant, app, policy, and published gateway policy:
 
 ```bash
-go run ./services/gateway/cmd/gateway
-go run ./services/control-api/cmd/control-api
-go run ./services/worker/cmd/worker
+./scripts/seed-demo.sh
+```
+
+Try the request paths:
+
+```bash
+# Allowed
+curl -i -H 'Host: demo.local' http://localhost:8080/
+
+# Blocked by custom rule
+curl -i -H 'Host: demo.local' http://localhost:8080/admin
+
+# Rate limited after 3 requests within 60 seconds
+curl -i -H 'Host: demo.local' http://localhost:8080/login
+
+# Echo through Gateway -> NGINX origin -> demo app
+curl -i -X POST -H 'Host: demo.local' -H 'Content-Type: application/json' \
+  -d '{"hello":"bedemwaf"}' http://localhost:8080/api/echo
+```
+
+Follow logs or stop the stack:
+
+```bash
+./scripts/dev-logs.sh
+./scripts/dev-down.sh
 ```
 
 ## Current Implementation Status
 
 - Monorepo structure is in place
 - Documentation is specific to the intended BedemWAF model
-- Go services have minimal compiling entrypoints
-- Docker Compose validates from `deployments/`
-- Business logic is intentionally left as TODOs for reviewable follow-up work
+- Go services have compiling entrypoints
+- Docker Compose validates and runs the local stack from `deployments/`
+- Gateway, Control API, Dashboard, event storage, and demo policy publishing are
+  wired for local development
 
 Next implementation steps:
 
-- Add gateway configuration loading and reverse proxy skeleton
-- Add Coraza integration and CRS rule loading
-- Add policy decision model and unit tests
-- Add control API router, validation, migrations, and OpenAPI generation
-- Add database migrations
-- Scaffold the Next.js dashboard
-- Add event ingestion and ClickHouse schema
+- Add production deployment manifests
+- Add proper dashboard session authentication
+- Add worker retention and enrichment jobs
+- Add managed CRS update workflows
 
 ## Documentation
 
