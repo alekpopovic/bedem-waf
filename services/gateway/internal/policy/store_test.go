@@ -360,6 +360,34 @@ func TestCustomRuleTerminalAllowShortCircuitsLaterBlock(t *testing.T) {
 	}
 }
 
+func TestCustomRuleAllowWithoutTerminalDoesNotShortCircuitLaterBlock(t *testing.T) {
+	app := testPolicyApp(t, []config.CustomRuleConfig{
+		{
+			ID:       "rule-allow",
+			Name:     "Non-terminal allow",
+			Priority: 100,
+			Enabled:  true,
+			Action:   "allow",
+			When:     config.ConditionConfig{PathStartsWith: "/blocked-test"},
+		},
+		{
+			ID:       "rule-block",
+			Name:     "Block test path",
+			Priority: 200,
+			Enabled:  true,
+			Action:   "block",
+			When:     config.ConditionConfig{PathStartsWith: "/blocked-test"},
+		},
+	}, nil)
+
+	got := app.EvaluateCustomRules(testRequestContext(func(ctx *RequestContext) {
+		ctx.Path = "/blocked-test"
+	}))
+	if got.Action != decision.ActionBlock || got.MatchedRuleID != "rule-block" {
+		t.Fatalf("decision = %+v, want later block to win", got)
+	}
+}
+
 func TestCustomRuleInvalidValidation(t *testing.T) {
 	_, err := NewStore([]config.AppConfig{{
 		ID:        "app-local",
@@ -382,6 +410,28 @@ func TestCustomRuleInvalidValidation(t *testing.T) {
 	}})
 	if err == nil {
 		t.Fatal("NewStore() error = nil, want invalid rule validation error")
+	}
+}
+
+func TestCustomRuleUnknownIPSetValidation(t *testing.T) {
+	_, err := NewStore([]config.AppConfig{{
+		ID:        "app-local",
+		Hostnames: []string{"example.local"},
+		Origin:    config.OriginConfig{URL: "http://localhost:9000"},
+		Policy: config.PolicyConfig{
+			Mode:          "count",
+			DefaultAction: "allow",
+			CustomRules: []config.CustomRuleConfig{{
+				ID:      "rule-missing-ip-set",
+				Name:    "Missing IP set",
+				Enabled: true,
+				Action:  "block",
+				When:    config.ConditionConfig{ClientIPInIPSet: "office_ips"},
+			}},
+		},
+	}})
+	if err == nil {
+		t.Fatal("NewStore() error = nil, want unknown IP set validation error")
 	}
 }
 

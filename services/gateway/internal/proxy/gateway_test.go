@@ -204,6 +204,120 @@ func TestRequestBodyRestoredBeforeProxying(t *testing.T) {
 	}
 }
 
+func TestGatewayProxiesToHttptestUpstream(t *testing.T) {
+	const requestBody = `{"message":"hello"}`
+	var gotMethod, gotPath, gotBody, gotRequestID, gotForwardedHost string
+	gateway := testGatewayWithOptions(t, testGatewayOptions{
+		mode:      "block",
+		originURL: "http://origin.local",
+		limiter:   ratelimit.NoopLimiter{},
+		waf:       waf.AllowEngine{},
+		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			gotMethod = req.Method
+			gotPath = req.URL.Path
+			gotRequestID = req.Header.Get("X-BedemWAF-Request-ID")
+			gotForwardedHost = req.Header.Get("X-Forwarded-Host")
+			data, err := io.ReadAll(req.Body)
+			if err != nil {
+				t.Fatalf("upstream read body: %v", err)
+			}
+			gotBody = string(data)
+			resp, err := textResponse(req, http.StatusAccepted, "proxied")
+			if err != nil {
+				return nil, err
+			}
+			resp.Header.Set("X-Origin-Test", "ok")
+			return resp, nil
+		}),
+		auditOut: io.Discard,
+	})
+	req := httptest.NewRequest(http.MethodPost, "http://example.local/api/echo", strings.NewReader(requestBody))
+	req.RemoteAddr = "198.51.100.10:12345"
+	rec := httptest.NewRecorder()
+
+	gateway.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.TrimSpace(rec.Body.String()) != "proxied" {
+		t.Fatalf("response body = %q, want proxied", rec.Body.String())
+	}
+	if gotMethod != http.MethodPost || gotPath != "/api/echo" || gotBody != requestBody {
+		t.Fatalf("upstream got method=%q path=%q body=%q", gotMethod, gotPath, gotBody)
+	}
+	if gotRequestID == "" {
+		t.Fatal("upstream missing X-BedemWAF-Request-ID")
+	}
+	if gotForwardedHost != "example.local" {
+		t.Fatalf("X-Forwarded-Host = %q, want example.local", gotForwardedHost)
+	}
+}
+
+func TestGatewayAuditRedactsQueryAndDoesNotLogBodyByDefault(t *testing.T) {
+	var auditOutput bytes.Buffer
+	gateway := testGatewayWithOptions(t, testGatewayOptions{
+		mode:      "block",
+		originURL: "http://origin.local",
+		limiter:   ratelimit.NoopLimiter{},
+		waf:       waf.AllowEngine{},
+		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return textResponse(req, http.StatusOK, "ok")
+		}),
+		auditOut: &auditOutput,
+	})
+	req := httptest.NewRequest(http.MethodPost, "http://example.local/login?token=secret-token&next=%2Fdashboard", strings.NewReader("secret-body-value"))
+	req.RemoteAddr = "198.51.100.10:12345"
+	rec := httptest.NewRecorder()
+
+	gateway.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	rawAudit := auditOutput.String()
+	for _, forbidden := range []string{"secret-token", "secret-body-value"} {
+		if strings.Contains(rawAudit, forbidden) {
+			t.Fatalf("audit log leaked %q in %s", forbidden, rawAudit)
+		}
+	}
+	event := decodeAuditEvent(t, auditOutput.Bytes())
+	query, ok := event["query_redacted"].(string)
+	if !ok {
+		t.Fatalf("query_redacted = %T, want string", event["query_redacted"])
+	}
+	if !strings.Contains(query, "token=%5BREDACTED%5D") || !strings.Contains(query, "next=%2Fdashboard") {
+		t.Fatalf("query_redacted = %q, want redacted token and preserved next", query)
+	}
+	if _, ok := event["body_preview"]; ok {
+		t.Fatalf("body_preview was logged by default: %v", event["body_preview"])
+	}
+}
+
+func TestOversizedBodyBlocksInBlockMode(t *testing.T) {
+	gateway := testGatewayWithOptions(t, testGatewayOptions{
+		mode:      "block",
+		originURL: "http://origin.local",
+		limiter:   ratelimit.NoopLimiter{},
+		waf:       waf.AllowEngine{},
+		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			t.Fatal("origin should not be called for oversized body")
+			return nil, nil
+		}),
+		auditOut:  io.Discard,
+		bodyLimit: 4,
+	})
+	req := httptest.NewRequest(http.MethodPost, "http://example.local/upload", strings.NewReader("too-large"))
+	req.RemoteAddr = "198.51.100.10:12345"
+	rec := httptest.NewRecorder()
+
+	gateway.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
 func TestCustomRuleDecisionIncludedInAuditEvent(t *testing.T) {
 	var auditOutput bytes.Buffer
 	gateway := testGatewayWithOptions(t, testGatewayOptions{
@@ -252,17 +366,22 @@ type testGatewayOptions struct {
 	waf       waf.Engine
 	transport http.RoundTripper
 	auditOut  io.Writer
+	bodyLimit int64
 }
 
 func testGatewayWithOptions(t *testing.T, opts testGatewayOptions) *Gateway {
 	t.Helper()
+	bodyLimit := opts.bodyLimit
+	if bodyLimit == 0 {
+		bodyLimit = 1 << 20
+	}
 	cfg := config.Config{
 		Server: config.ServerConfig{ListenAddr: ":8080"},
 		WAF: config.WAFConfig{
 			Enabled:               true,
 			Engine:                "coraza",
 			RuleEngine:            "On",
-			RequestBodyLimitBytes: 1 << 20,
+			RequestBodyLimitBytes: bodyLimit,
 			BodyPreviewBytes:      256,
 		},
 		Apps: []config.AppConfig{{
