@@ -30,6 +30,7 @@ PAGES = [
     Page(DOCS / "data-plane.md", "Data Plane", "data-plane", "Core"),
     Page(DOCS / "control-plane.md", "Control Plane", "control-plane", "Core"),
     Page(DOCS / "request-flow.md", "Request Flow", "request-flow", "Core"),
+    Page(DOCS / "implementation-plan.md", "Implementation Plan", "implementation-plan", "Core"),
     Page(DOCS / "policy-model.md", "Policy Model", "policy-model", "Models"),
     Page(DOCS / "event-schema.md", "Event Schema", "event-schema", "Models"),
     Page(DOCS / "deployment-model.md", "Deployment Model", "deployment-model", "Operations"),

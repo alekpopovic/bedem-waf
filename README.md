@@ -220,6 +220,7 @@ Next implementation steps:
 - [Control Plane](docs/control-plane.md)
 - [Request Flow](docs/request-flow.md)
 - [Deployment Model](docs/deployment-model.md)
+- [Implementation Plan](docs/implementation-plan.md)
 - [Demo Flow](docs/demo.md)
 - [Threat Model](docs/threat-model.md)
 - [Local Development](docs/local-development.md)
