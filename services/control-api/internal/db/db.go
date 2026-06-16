@@ -24,22 +24,22 @@ type Repository interface {
 	Ping(context.Context) error
 	ListTenants(context.Context) ([]models.Tenant, error)
 	CreateTenant(context.Context, models.CreateTenantRequest) (models.Tenant, error)
-	ListApps(context.Context) ([]models.App, error)
+	ListApps(context.Context, string) ([]models.App, error)
 	CreateApp(context.Context, models.CreateAppRequest, *url.URL) (models.App, error)
-	GetApp(context.Context, string) (models.App, error)
-	UpdateApp(context.Context, string, models.UpdateAppRequest, *url.URL) (models.App, error)
-	ListPoliciesByApp(context.Context, string) ([]models.Policy, error)
-	CreatePolicy(context.Context, string, models.CreatePolicyRequest) (models.Policy, error)
-	GetPolicy(context.Context, string) (models.Policy, error)
-	UpdatePolicy(context.Context, string, models.UpdatePolicyRequest) (models.Policy, error)
-	PublishPolicy(context.Context, string) (models.PublishPolicyResponse, error)
-	GetActivePolicyByApp(context.Context, string) (models.GatewayPolicy, error)
+	GetApp(context.Context, string, string) (models.App, error)
+	UpdateApp(context.Context, string, string, models.UpdateAppRequest, *url.URL) (models.App, error)
+	ListPoliciesByApp(context.Context, string, string) ([]models.Policy, error)
+	CreatePolicy(context.Context, string, string, models.CreatePolicyRequest) (models.Policy, error)
+	GetPolicy(context.Context, string, string) (models.Policy, error)
+	UpdatePolicy(context.Context, string, string, models.UpdatePolicyRequest) (models.Policy, error)
+	PublishPolicy(context.Context, string, string) (models.PublishPolicyResponse, error)
+	GetActivePolicyByApp(context.Context, string, string) (models.GatewayPolicy, error)
 	GetGatewayPolicyByHostname(context.Context, string) (models.GatewayPolicy, error)
 	ListManagedRuleSets(context.Context) ([]models.ManagedRuleSet, error)
 	ListManagedRuleVersions(context.Context, string) ([]models.ManagedRuleVersion, error)
 	ActivateManagedRuleVersion(context.Context, string, string) (models.ActivateManagedRuleVersionResponse, error)
-	ListEvents(context.Context, int) ([]models.EventRef, error)
-	GetEvent(context.Context, string) (models.EventRef, error)
+	ListEvents(context.Context, string, int) ([]models.EventRef, error)
+	GetEvent(context.Context, string, string) (models.EventRef, error)
 	Close()
 }
 
@@ -113,12 +113,12 @@ func (r *PostgresRepository) CreateTenant(ctx context.Context, req models.Create
 	return tenant, err
 }
 
-func (r *PostgresRepository) ListApps(ctx context.Context) ([]models.App, error) {
+func (r *PostgresRepository) ListApps(ctx context.Context, tenantID string) ([]models.App, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id::text, tenant_id::text, name, slug, hostnames, status, metadata, created_at, updated_at
 		FROM apps
-		WHERE deleted_at IS NULL
-		ORDER BY created_at DESC`)
+		WHERE tenant_id = $1 AND deleted_at IS NULL
+		ORDER BY created_at DESC`, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -169,12 +169,12 @@ func (r *PostgresRepository) CreateApp(ctx context.Context, req models.CreateApp
 	return app, nil
 }
 
-func (r *PostgresRepository) GetApp(ctx context.Context, id string) (models.App, error) {
+func (r *PostgresRepository) GetApp(ctx context.Context, tenantID string, id string) (models.App, error) {
 	var app models.App
 	err := r.pool.QueryRow(ctx, `
 		SELECT id::text, tenant_id::text, name, slug, hostnames, status, metadata, created_at, updated_at
 		FROM apps
-		WHERE id = $1 AND deleted_at IS NULL`, id,
+		WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`, tenantID, id,
 	).Scan(&app.ID, &app.TenantID, &app.Name, &app.Slug, &app.Hostnames, &app.Status, &app.Metadata, &app.CreatedAt, &app.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.App{}, ErrNotFound
@@ -190,8 +190,8 @@ func (r *PostgresRepository) GetApp(ctx context.Context, id string) (models.App,
 	return app, nil
 }
 
-func (r *PostgresRepository) UpdateApp(ctx context.Context, id string, req models.UpdateAppRequest, originURL *url.URL) (models.App, error) {
-	current, err := r.GetApp(ctx, id)
+func (r *PostgresRepository) UpdateApp(ctx context.Context, tenantID string, id string, req models.UpdateAppRequest, originURL *url.URL) (models.App, error) {
+	current, err := r.GetApp(ctx, tenantID, id)
 	if err != nil {
 		return models.App{}, err
 	}
@@ -218,9 +218,9 @@ func (r *PostgresRepository) UpdateApp(ctx context.Context, id string, req model
 	err = tx.QueryRow(ctx, `
 		UPDATE apps
 		SET name = $2, hostnames = $3, status = $4, metadata = $5, updated_at = now()
-		WHERE id = $1 AND deleted_at IS NULL
+		WHERE id = $1 AND tenant_id = $6 AND deleted_at IS NULL
 		RETURNING id::text, tenant_id::text, name, slug, hostnames, status, metadata, created_at, updated_at`,
-		id, current.Name, current.Hostnames, current.Status, metadata,
+		id, current.Name, current.Hostnames, current.Status, metadata, tenantID,
 	).Scan(&current.ID, &current.TenantID, &current.Name, &current.Slug, &current.Hostnames, &current.Status, &current.Metadata, &current.CreatedAt, &current.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.App{}, ErrNotFound
@@ -229,7 +229,7 @@ func (r *PostgresRepository) UpdateApp(ctx context.Context, id string, req model
 		return models.App{}, err
 	}
 	if originURL != nil {
-		if _, err := tx.Exec(ctx, `UPDATE origins SET deleted_at = now(), updated_at = now() WHERE app_id = $1 AND deleted_at IS NULL`, id); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE origins SET deleted_at = now(), updated_at = now() WHERE tenant_id = $1 AND app_id = $2 AND deleted_at IS NULL`, tenantID, id); err != nil {
 			return models.App{}, err
 		}
 		origin, err := insertOrigin(ctx, tx, current.TenantID, current.ID, originURL)
@@ -250,13 +250,13 @@ func (r *PostgresRepository) UpdateApp(ctx context.Context, id string, req model
 	return current, nil
 }
 
-func (r *PostgresRepository) ListPoliciesByApp(ctx context.Context, appID string) ([]models.Policy, error) {
+func (r *PostgresRepository) ListPoliciesByApp(ctx context.Context, tenantID string, appID string) ([]models.Policy, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id::text, tenant_id::text, app_id::text, name, mode, enabled,
 		       COALESCE(active_version_id::text, ''), created_at, updated_at
 		FROM policies
-		WHERE app_id = $1 AND deleted_at IS NULL
-		ORDER BY created_at DESC`, appID)
+		WHERE tenant_id = $1 AND app_id = $2 AND deleted_at IS NULL
+		ORDER BY created_at DESC`, tenantID, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -272,8 +272,8 @@ func (r *PostgresRepository) ListPoliciesByApp(ctx context.Context, appID string
 	return policies, rows.Err()
 }
 
-func (r *PostgresRepository) CreatePolicy(ctx context.Context, appID string, req models.CreatePolicyRequest) (models.Policy, error) {
-	app, err := r.GetApp(ctx, appID)
+func (r *PostgresRepository) CreatePolicy(ctx context.Context, tenantID string, appID string, req models.CreatePolicyRequest) (models.Policy, error) {
+	app, err := r.GetApp(ctx, tenantID, appID)
 	if err != nil {
 		return models.Policy{}, err
 	}
@@ -297,14 +297,14 @@ func (r *PostgresRepository) CreatePolicy(ctx context.Context, appID string, req
 	return policy, err
 }
 
-func (r *PostgresRepository) GetPolicy(ctx context.Context, id string) (models.Policy, error) {
+func (r *PostgresRepository) GetPolicy(ctx context.Context, tenantID string, id string) (models.Policy, error) {
 	var policy models.Policy
 	err := r.pool.QueryRow(ctx, `
 		SELECT p.id::text, p.tenant_id::text, p.app_id::text, p.name, p.mode, p.enabled,
 		       COALESCE(p.active_version_id::text, ''), COALESCE(p.metadata->'snapshot', '{}'::jsonb),
 		       p.created_at, p.updated_at
 		FROM policies p
-		WHERE p.id = $1 AND p.deleted_at IS NULL`, id,
+		WHERE p.tenant_id = $1 AND p.id = $2 AND p.deleted_at IS NULL`, tenantID, id,
 	).Scan(&policy.ID, &policy.TenantID, &policy.AppID, &policy.Name, &policy.Mode, &policy.Enabled, &policy.ActiveVersionID, &policy.Snapshot, &policy.CreatedAt, &policy.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.Policy{}, ErrNotFound
@@ -312,7 +312,7 @@ func (r *PostgresRepository) GetPolicy(ctx context.Context, id string) (models.P
 	return policy, err
 }
 
-func (r *PostgresRepository) UpdatePolicy(ctx context.Context, id string, req models.UpdatePolicyRequest) (models.Policy, error) {
+func (r *PostgresRepository) UpdatePolicy(ctx context.Context, tenantID string, id string, req models.UpdatePolicyRequest) (models.Policy, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return models.Policy{}, err
@@ -321,7 +321,7 @@ func (r *PostgresRepository) UpdatePolicy(ctx context.Context, id string, req mo
 		_ = tx.Rollback(ctx)
 	}()
 
-	current, err := getPolicyForUpdate(ctx, tx, id)
+	current, err := getPolicyForUpdate(ctx, tx, tenantID, id)
 	if err != nil {
 		return models.Policy{}, err
 	}
@@ -348,11 +348,11 @@ func (r *PostgresRepository) UpdatePolicy(ctx context.Context, id string, req mo
 	err = tx.QueryRow(ctx, `
 		UPDATE policies
 		SET name = $2, mode = $3, enabled = $4, metadata = $5, updated_at = now()
-		WHERE id = $1 AND deleted_at IS NULL
+		WHERE id = $1 AND tenant_id = $6 AND deleted_at IS NULL
 		RETURNING id::text, tenant_id::text, app_id::text, name, mode, enabled,
 		          COALESCE(active_version_id::text, ''), COALESCE(metadata->'snapshot', '{}'::jsonb),
 		          created_at, updated_at`,
-		id, current.Name, current.Mode, current.Enabled, metadata,
+		id, current.Name, current.Mode, current.Enabled, metadata, tenantID,
 	).Scan(&updated.ID, &updated.TenantID, &updated.AppID, &updated.Name, &updated.Mode, &updated.Enabled, &updated.ActiveVersionID, &updated.Snapshot, &updated.CreatedAt, &updated.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.Policy{}, ErrNotFound
@@ -366,7 +366,7 @@ func (r *PostgresRepository) UpdatePolicy(ctx context.Context, id string, req mo
 	return updated, nil
 }
 
-func (r *PostgresRepository) PublishPolicy(ctx context.Context, id string) (models.PublishPolicyResponse, error) {
+func (r *PostgresRepository) PublishPolicy(ctx context.Context, tenantID string, id string) (models.PublishPolicyResponse, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return models.PublishPolicyResponse{}, err
@@ -375,7 +375,7 @@ func (r *PostgresRepository) PublishPolicy(ctx context.Context, id string) (mode
 		_ = tx.Rollback(ctx)
 	}()
 
-	policy, err := getPolicyForUpdate(ctx, tx, id)
+	policy, err := getPolicyForUpdate(ctx, tx, tenantID, id)
 	if err != nil {
 		return models.PublishPolicyResponse{}, err
 	}
@@ -407,7 +407,7 @@ func (r *PostgresRepository) PublishPolicy(ctx context.Context, id string) (mode
 	if err != nil {
 		return models.PublishPolicyResponse{}, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE policies SET active_version_id = $2, updated_at = now() WHERE id = $1`, policy.ID, versionID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE policies SET active_version_id = $2, updated_at = now() WHERE tenant_id = $3 AND id = $1`, policy.ID, versionID, tenantID); err != nil {
 		return models.PublishPolicyResponse{}, err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -427,20 +427,21 @@ func (r *PostgresRepository) PublishPolicy(ctx context.Context, id string) (mode
 	return models.PublishPolicyResponse{PolicyID: policy.ID, PolicyVersionID: versionID, Version: version, PublishedAt: publishedAt}, nil
 }
 
-func (r *PostgresRepository) GetActivePolicyByApp(ctx context.Context, appID string) (models.GatewayPolicy, error) {
+func (r *PostgresRepository) GetActivePolicyByApp(ctx context.Context, tenantID string, appID string) (models.GatewayPolicy, error) {
 	var snapshot []byte
 	err := r.pool.QueryRow(ctx, `
 		SELECT v.snapshot
 		FROM policy_deployments d
 		JOIN policies p ON p.id = d.policy_id
 		JOIN policy_versions v ON v.id = d.policy_version_id
-		WHERE d.app_id = $1
+		WHERE d.tenant_id = $1
+		  AND d.app_id = $2
 		  AND d.gateway_node_id = 'default'
 		  AND d.status = 'active'
 		  AND p.deleted_at IS NULL
 		  AND p.enabled = true
 		ORDER BY d.deployed_at DESC
-		LIMIT 1`, appID,
+		LIMIT 1`, tenantID, appID,
 	).Scan(&snapshot)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.GatewayPolicy{}, ErrNotFound
@@ -547,14 +548,15 @@ func (r *PostgresRepository) ActivateManagedRuleVersion(ctx context.Context, rul
 	}, nil
 }
 
-func (r *PostgresRepository) ListEvents(ctx context.Context, limit int) ([]models.EventRef, error) {
+func (r *PostgresRepository) ListEvents(ctx context.Context, tenantID string, limit int) ([]models.EventRef, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id::text, tenant_id::text, COALESCE(app_id::text, ''), COALESCE(policy_id::text, ''),
 		       event_id, request_id, COALESCE(source_ip::text, ''), COALESCE(host, ''),
 		       COALESCE(path, ''), action, occurred_at, metadata
 		FROM audit_event_refs
+		WHERE tenant_id = $1
 		ORDER BY occurred_at DESC
-		LIMIT $1`, limit)
+		LIMIT $2`, tenantID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -570,14 +572,14 @@ func (r *PostgresRepository) ListEvents(ctx context.Context, limit int) ([]model
 	return events, rows.Err()
 }
 
-func (r *PostgresRepository) GetEvent(ctx context.Context, eventID string) (models.EventRef, error) {
+func (r *PostgresRepository) GetEvent(ctx context.Context, tenantID string, eventID string) (models.EventRef, error) {
 	var event models.EventRef
 	err := r.pool.QueryRow(ctx, `
 		SELECT id::text, tenant_id::text, COALESCE(app_id::text, ''), COALESCE(policy_id::text, ''),
 		       event_id, request_id, COALESCE(source_ip::text, ''), COALESCE(host, ''),
-		       COALESCE(path, ''), action, occurred_at, metadata
+	       COALESCE(path, ''), action, occurred_at, metadata
 		FROM audit_event_refs
-		WHERE event_id = $1`, eventID,
+		WHERE tenant_id = $1 AND event_id = $2`, tenantID, eventID,
 	).Scan(&event.ID, &event.TenantID, &event.AppID, &event.PolicyID, &event.EventID, &event.RequestID, &event.SourceIP, &event.Host, &event.Path, &event.Action, &event.OccurredAt, &event.Metadata)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.EventRef{}, ErrNotFound
@@ -638,14 +640,14 @@ func insertOrigin(ctx context.Context, tx pgx.Tx, tenantID, appID string, origin
 	return origin, nil
 }
 
-func getPolicyForUpdate(ctx context.Context, tx pgx.Tx, id string) (models.Policy, error) {
+func getPolicyForUpdate(ctx context.Context, tx pgx.Tx, tenantID string, id string) (models.Policy, error) {
 	var policy models.Policy
 	err := tx.QueryRow(ctx, `
 		SELECT id::text, tenant_id::text, app_id::text, name, mode, enabled,
 		       COALESCE(active_version_id::text, ''), COALESCE(metadata->'snapshot', '{}'::jsonb), created_at, updated_at
 		FROM policies
-		WHERE id = $1 AND deleted_at IS NULL
-		FOR UPDATE`, id,
+		WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+		FOR UPDATE`, tenantID, id,
 	).Scan(&policy.ID, &policy.TenantID, &policy.AppID, &policy.Name, &policy.Mode, &policy.Enabled, &policy.ActiveVersionID, &policy.Snapshot, &policy.CreatedAt, &policy.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.Policy{}, ErrNotFound

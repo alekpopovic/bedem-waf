@@ -148,6 +148,49 @@ func TestCreateAppValidatesHostnameAndOrigin(t *testing.T) {
 	assertErrorShape(t, rec.Body.Bytes(), "invalid_request")
 }
 
+func TestMissingTenantContextReturnsClearError(t *testing.T) {
+	handler := testServer(t).Routes()
+	req := httptest.NewRequest(http.MethodGet, "/v1/apps", nil)
+	req.Header.Set("Authorization", "Bearer test-admin-key")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	assertErrorShape(t, rec.Body.Bytes(), "tenant_required")
+}
+
+func TestTenantCannotReadAppFromAnotherTenant(t *testing.T) {
+	handler := testServer(t).Routes()
+	req := authedRequest(http.MethodGet, "/v1/apps/app-2", bytes.NewBuffer(nil))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	assertErrorShape(t, rec.Body.Bytes(), "not_found")
+}
+
+func TestTenantCannotUpdatePolicyFromAnotherTenant(t *testing.T) {
+	repo := newFakeRepo()
+	policy := repo.policies["policy-2"]
+	handler := NewServer(repo, &fakeEventStore{}, auth.NewStaticBearer("test-admin-key"), auth.NewStaticBearer("test-gateway-key"), nil).Routes()
+	body := bytes.NewBufferString(`{"expected_updated_at":"` + policy.UpdatedAt.Format(time.RFC3339Nano) + `","mode":"block"}`)
+	req := authedRequest(http.MethodPatch, "/v1/policies/policy-2", body)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	assertErrorShape(t, rec.Body.Bytes(), "not_found")
+}
+
 func TestCreatePolicyValidatesModeActionAndCIDRInSnapshot(t *testing.T) {
 	handler := testServer(t).Routes()
 	body := bytes.NewBufferString(`{
@@ -246,6 +289,9 @@ func TestPublishFlowCreatesImmutableVersionAndActiveGatewayPolicy(t *testing.T) 
 	if gatewayPolicy.PolicyVersionID == "" || gatewayPolicy.Origin.URL == "" || string(gatewayPolicy.CustomRules) != firstVersionSnapshot {
 		t.Fatalf("gateway policy = %+v, want active immutable version", gatewayPolicy)
 	}
+	if gatewayPolicy.TenantID != "tenant-1" || gatewayPolicy.AppID != "app-1" {
+		t.Fatalf("gateway policy tenant/app = %q/%q, want tenant-1/app-1", gatewayPolicy.TenantID, gatewayPolicy.AppID)
+	}
 }
 
 func TestPolicySimulationSummary(t *testing.T) {
@@ -328,6 +374,35 @@ func TestEventsAPIFiltersAndLimit(t *testing.T) {
 	}
 }
 
+func TestEventSearchIsTenantScoped(t *testing.T) {
+	eventStore := &fakeEventStore{}
+	handler := NewServer(newFakeRepo(), eventStore, auth.NewStaticBearer("test-admin-key"), auth.NewStaticBearer("test-gateway-key"), nil).Routes()
+	req := authedRequest(http.MethodGet, "/v1/events?app_id=app-1", bytes.NewBuffer(nil))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if eventStore.lastFilters.TenantID != "tenant-1" {
+		t.Fatalf("tenant filter = %q, want tenant-1", eventStore.lastFilters.TenantID)
+	}
+}
+
+func TestEventSearchRejectsTenantQueryMismatch(t *testing.T) {
+	handler := testServer(t).Routes()
+	req := authedRequest(http.MethodGet, "/v1/events?tenant_id=tenant-2", bytes.NewBuffer(nil))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	assertErrorShape(t, rec.Body.Bytes(), "invalid_request")
+}
+
 func TestEventsAPIDateRangeValidation(t *testing.T) {
 	handler := testServer(t).Routes()
 	req := authedRequest(http.MethodGet, "/v1/events?from=2026-06-16T11:00:00Z&to=2026-06-16T10:00:00Z", bytes.NewBuffer(nil))
@@ -373,6 +448,7 @@ func testServer(t *testing.T) *Server {
 func authedRequest(method, path string, body *bytes.Buffer) *http.Request {
 	req := httptest.NewRequest(method, path, body)
 	req.Header.Set("Authorization", "Bearer test-admin-key")
+	req.Header.Set("X-Bedem-Tenant-ID", "tenant-1")
 	req.Header.Set("Content-Type", "application/json")
 	return req
 }
@@ -405,13 +481,22 @@ type fakeRepo struct {
 func newFakeRepo() *fakeRepo {
 	now := time.Now().UTC()
 	return &fakeRepo{
-		tenants: []models.Tenant{{ID: "tenant-1", Name: "Demo", Slug: "demo", Status: "active", CreatedAt: now, UpdatedAt: now}},
+		tenants: []models.Tenant{
+			{ID: "tenant-1", Name: "Demo", Slug: "demo", Status: "active", CreatedAt: now, UpdatedAt: now},
+			{ID: "tenant-2", Name: "Other", Slug: "other", Status: "active", CreatedAt: now, UpdatedAt: now},
+		},
 		apps: []models.App{{
 			ID: "app-1", TenantID: "tenant-1", Name: "Demo App", Slug: "demo-app",
 			Hostnames: []string{"example.local"}, Status: "active", CreatedAt: now, UpdatedAt: now,
 			Origins: []models.Origin{{Name: "primary", Scheme: "http", Host: "origin.local", Port: 9000, URL: "http://origin.local:9000"}},
+		}, {
+			ID: "app-2", TenantID: "tenant-2", Name: "Other App", Slug: "other-app",
+			Hostnames: []string{"other.local"}, Status: "active", CreatedAt: now, UpdatedAt: now,
+			Origins: []models.Origin{{Name: "primary", Scheme: "http", Host: "other-origin.local", Port: 9000, URL: "http://other-origin.local:9000"}},
 		}},
-		policies: make(map[string]models.Policy),
+		policies: map[string]models.Policy{
+			"policy-2": {ID: "policy-2", TenantID: "tenant-2", AppID: "app-2", Name: "Other Policy", Mode: "count", Enabled: true, Snapshot: []byte(`{}`), CreatedAt: now, UpdatedAt: now},
+		},
 		ruleSets: []models.ManagedRuleSet{{
 			ID:        "mrs-1",
 			Name:      "OWASP CRS Local",
@@ -439,8 +524,14 @@ func (f *fakeRepo) CreateTenant(_ context.Context, req models.CreateTenantReques
 	return tenant, nil
 }
 
-func (f *fakeRepo) ListApps(context.Context) ([]models.App, error) {
-	return f.apps, nil
+func (f *fakeRepo) ListApps(_ context.Context, tenantID string) ([]models.App, error) {
+	apps := make([]models.App, 0, len(f.apps))
+	for _, app := range f.apps {
+		if app.TenantID == tenantID {
+			apps = append(apps, app)
+		}
+	}
+	return apps, nil
 }
 
 func (f *fakeRepo) CreateApp(_ context.Context, req models.CreateAppRequest, originURL *url.URL) (models.App, error) {
@@ -454,17 +545,17 @@ func (f *fakeRepo) CreateApp(_ context.Context, req models.CreateAppRequest, ori
 	return app, nil
 }
 
-func (f *fakeRepo) GetApp(_ context.Context, id string) (models.App, error) {
+func (f *fakeRepo) GetApp(_ context.Context, tenantID string, id string) (models.App, error) {
 	for _, app := range f.apps {
-		if app.ID == id {
+		if app.TenantID == tenantID && app.ID == id {
 			return app, nil
 		}
 	}
 	return models.App{}, db.ErrNotFound
 }
 
-func (f *fakeRepo) UpdateApp(ctx context.Context, id string, req models.UpdateAppRequest, originURL *url.URL) (models.App, error) {
-	app, err := f.GetApp(ctx, id)
+func (f *fakeRepo) UpdateApp(ctx context.Context, tenantID string, id string, req models.UpdateAppRequest, originURL *url.URL) (models.App, error) {
+	app, err := f.GetApp(ctx, tenantID, id)
 	if err != nil {
 		return models.App{}, err
 	}
@@ -480,34 +571,42 @@ func (f *fakeRepo) UpdateApp(ctx context.Context, id string, req models.UpdateAp
 	return app, nil
 }
 
-func (f *fakeRepo) ListPoliciesByApp(context.Context, string) ([]models.Policy, error) {
+func (f *fakeRepo) ListPoliciesByApp(_ context.Context, tenantID string, appID string) ([]models.Policy, error) {
 	policies := make([]models.Policy, 0, len(f.policies))
 	for _, policy := range f.policies {
-		policies = append(policies, policy)
+		if policy.TenantID == tenantID && policy.AppID == appID {
+			policies = append(policies, policy)
+		}
 	}
 	return policies, nil
 }
 
-func (f *fakeRepo) CreatePolicy(_ context.Context, appID string, req models.CreatePolicyRequest) (models.Policy, error) {
+func (f *fakeRepo) CreatePolicy(ctx context.Context, tenantID string, appID string, req models.CreatePolicyRequest) (models.Policy, error) {
+	if _, err := f.GetApp(ctx, tenantID, appID); err != nil {
+		return models.Policy{}, err
+	}
 	now := time.Now().UTC()
-	policy := models.Policy{ID: "policy-created", TenantID: "tenant-1", AppID: appID, Name: req.Name, Mode: req.Mode, Enabled: true, Snapshot: req.Snapshot, CreatedAt: now, UpdatedAt: now}
+	policy := models.Policy{ID: "policy-created", TenantID: tenantID, AppID: appID, Name: req.Name, Mode: req.Mode, Enabled: true, Snapshot: req.Snapshot, CreatedAt: now, UpdatedAt: now}
 	f.policies[policy.ID] = policy
 	return policy, nil
 }
 
-func (f *fakeRepo) GetPolicy(_ context.Context, id string) (models.Policy, error) {
-	if policy, ok := f.policies[id]; ok {
+func (f *fakeRepo) GetPolicy(_ context.Context, tenantID string, id string) (models.Policy, error) {
+	if policy, ok := f.policies[id]; ok && policy.TenantID == tenantID {
 		return policy, nil
 	}
 	now := time.Now().UTC()
 	policy := models.Policy{ID: "policy-1", TenantID: "tenant-1", AppID: "app-1", Name: "Default", Mode: "count", Enabled: true, Snapshot: []byte(`{}`), CreatedAt: now, UpdatedAt: now}
 	f.policies[policy.ID] = policy
+	if policy.TenantID != tenantID || policy.ID != id {
+		return models.Policy{}, db.ErrNotFound
+	}
 	return policy, nil
 }
 
-func (f *fakeRepo) UpdatePolicy(_ context.Context, id string, req models.UpdatePolicyRequest) (models.Policy, error) {
+func (f *fakeRepo) UpdatePolicy(_ context.Context, tenantID string, id string, req models.UpdatePolicyRequest) (models.Policy, error) {
 	policy, ok := f.policies[id]
-	if !ok {
+	if !ok || policy.TenantID != tenantID {
 		return models.Policy{}, db.ErrNotFound
 	}
 	if !policy.UpdatedAt.Equal(req.ExpectedUpdatedAt) {
@@ -530,12 +629,22 @@ func (f *fakeRepo) UpdatePolicy(_ context.Context, id string, req models.UpdateP
 	return policy, nil
 }
 
-func (f *fakeRepo) PublishPolicy(_ context.Context, id string) (models.PublishPolicyResponse, error) {
+func (f *fakeRepo) PublishPolicy(_ context.Context, tenantID string, id string) (models.PublishPolicyResponse, error) {
 	policy, ok := f.policies[id]
-	if !ok {
+	if !ok || policy.TenantID != tenantID {
 		return models.PublishPolicyResponse{}, db.ErrNotFound
 	}
-	compiled := fakeCompilePolicy(policy, f.apps[0].Origins[0])
+	var origin models.Origin
+	for _, app := range f.apps {
+		if app.TenantID == tenantID && app.ID == policy.AppID && len(app.Origins) > 0 {
+			origin = app.Origins[0]
+			break
+		}
+	}
+	if origin.URL == "" {
+		return models.PublishPolicyResponse{}, db.ErrNotFound
+	}
+	compiled := fakeCompilePolicy(policy, origin)
 	compiled.PolicyVersionID = "version-" + string(rune('1'+len(f.versions)))
 	compiled.PublishedAt = time.Now().UTC()
 	f.versions = append(f.versions, compiled)
@@ -544,9 +653,9 @@ func (f *fakeRepo) PublishPolicy(_ context.Context, id string) (models.PublishPo
 	return models.PublishPolicyResponse{PolicyID: id, PolicyVersionID: compiled.PolicyVersionID, Version: len(f.versions), PublishedAt: compiled.PublishedAt}, nil
 }
 
-func (f *fakeRepo) GetActivePolicyByApp(_ context.Context, appID string) (models.GatewayPolicy, error) {
+func (f *fakeRepo) GetActivePolicyByApp(_ context.Context, tenantID string, appID string) (models.GatewayPolicy, error) {
 	for i := len(f.versions) - 1; i >= 0; i-- {
-		if f.versions[i].AppID == appID {
+		if f.versions[i].TenantID == tenantID && f.versions[i].AppID == appID {
 			return f.versions[i], nil
 		}
 	}
@@ -557,7 +666,7 @@ func (f *fakeRepo) GetGatewayPolicyByHostname(_ context.Context, hostname string
 	for _, app := range f.apps {
 		for _, got := range app.Hostnames {
 			if got == hostname {
-				return f.GetActivePolicyByApp(context.Background(), app.ID)
+				return f.GetActivePolicyByApp(context.Background(), app.TenantID, app.ID)
 			}
 		}
 	}
@@ -596,11 +705,11 @@ func (f *fakeRepo) ActivateManagedRuleVersion(_ context.Context, ruleSetID strin
 	}, nil
 }
 
-func (f *fakeRepo) ListEvents(context.Context, int) ([]models.EventRef, error) {
+func (f *fakeRepo) ListEvents(context.Context, string, int) ([]models.EventRef, error) {
 	return []models.EventRef{}, nil
 }
 
-func (f *fakeRepo) GetEvent(context.Context, string) (models.EventRef, error) {
+func (f *fakeRepo) GetEvent(context.Context, string, string) (models.EventRef, error) {
 	return models.EventRef{}, db.ErrNotFound
 }
 
@@ -650,9 +759,9 @@ func (f *fakeEventStore) Search(_ context.Context, filters events.SearchFilters)
 	}, nil
 }
 
-func (f *fakeEventStore) GetByRequestID(_ context.Context, requestID string) (events.Event, error) {
+func (f *fakeEventStore) GetByRequestID(_ context.Context, tenantID string, requestID string) (events.Event, error) {
 	if requestID == "missing" {
 		return events.Event{}, events.ErrNotFound
 	}
-	return events.Event{RequestID: requestID}, nil
+	return events.Event{TenantID: tenantID, RequestID: requestID}, nil
 }

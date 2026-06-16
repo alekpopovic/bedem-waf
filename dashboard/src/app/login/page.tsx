@@ -2,18 +2,20 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
-import { getControlApiUrl, setStoredApiKey } from "../../lib/api";
+import { getControlApiUrl, setStoredApiKey, setStoredTenantId } from "../../lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
   const [apiKey, setApiKey] = useState("");
+  const [tenantId, setTenantId] = useState("tenant-1");
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!apiKey.trim()) {
+    if (!apiKey.trim() || !tenantId.trim()) {
       return;
     }
     setStoredApiKey(apiKey.trim());
+    setStoredTenantId(tenantId.trim());
     router.replace("/dashboard");
   }
 
@@ -46,7 +48,11 @@ export default function LoginPage() {
             <label>Control API</label>
             <input readOnly value={getControlApiUrl()} />
           </div>
-          <button className="button" type="submit" disabled={!apiKey.trim()}>
+          <div className="field">
+            <label htmlFor="tenant-id">Tenant ID</label>
+            <input id="tenant-id" placeholder="tenant UUID or demo tenant id" value={tenantId} onChange={(event) => setTenantId(event.target.value)} />
+          </div>
+          <button className="button" type="submit" disabled={!apiKey.trim() || !tenantId.trim()}>
             Continue
           </button>
         </form>

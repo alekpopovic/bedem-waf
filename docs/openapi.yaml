@@ -107,6 +107,8 @@ paths:
       summary: List apps
       security:
         - AdminBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TenantContextHeader"
       responses:
         "200":
           description: Application list
@@ -127,6 +129,8 @@ paths:
       summary: Create app with primary origin
       security:
         - AdminBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TenantContextHeader"
       requestBody:
         required: true
         content:
@@ -160,6 +164,7 @@ paths:
       security:
         - AdminBearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/TenantContextHeader"
         - $ref: "#/components/parameters/AppID"
       responses:
         "200":
@@ -178,6 +183,7 @@ paths:
       security:
         - AdminBearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/TenantContextHeader"
         - $ref: "#/components/parameters/AppID"
       requestBody:
         required: true
@@ -206,6 +212,7 @@ paths:
       security:
         - AdminBearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/TenantContextHeader"
         - $ref: "#/components/parameters/AppID"
       responses:
         "200":
@@ -230,6 +237,7 @@ paths:
       security:
         - AdminBearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/TenantContextHeader"
         - $ref: "#/components/parameters/AppID"
       requestBody:
         required: true
@@ -290,6 +298,7 @@ paths:
       security:
         - AdminBearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/TenantContextHeader"
         - $ref: "#/components/parameters/AppID"
       responses:
         "200":
@@ -310,6 +319,7 @@ paths:
       security:
         - AdminBearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/TenantContextHeader"
         - $ref: "#/components/parameters/PolicyID"
       responses:
         "200":
@@ -328,6 +338,7 @@ paths:
       security:
         - AdminBearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/TenantContextHeader"
         - $ref: "#/components/parameters/PolicyID"
       requestBody:
         required: true
@@ -358,6 +369,7 @@ paths:
       security:
         - AdminBearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/TenantContextHeader"
         - $ref: "#/components/parameters/PolicyID"
       responses:
         "201":
@@ -380,6 +392,7 @@ paths:
       security:
         - AdminBearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/TenantContextHeader"
         - $ref: "#/components/parameters/PolicyID"
         - $ref: "#/components/parameters/FromQuery"
         - $ref: "#/components/parameters/ToQuery"
@@ -496,6 +509,7 @@ paths:
       security:
         - AdminBearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/TenantContextHeader"
         - $ref: "#/components/parameters/TenantIDQuery"
         - $ref: "#/components/parameters/AppIDQuery"
         - $ref: "#/components/parameters/HostQuery"
@@ -530,6 +544,7 @@ paths:
       security:
         - AdminBearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/TenantContextHeader"
         - $ref: "#/components/parameters/RequestID"
       responses:
         "200":
@@ -557,6 +572,14 @@ components:
       description: Static MVP gateway token from `BEDEMWAF_GATEWAY_API_KEY`.
 
   parameters:
+    TenantContextHeader:
+      name: X-Bedem-Tenant-ID
+      in: header
+      required: true
+      description: Tenant context for admin API calls. The MVP also accepts matching `tenant_id` query parameter for local development only.
+      schema:
+        type: string
+      example: tenant-1
     AppID:
       name: app_id
       in: path
@@ -603,6 +626,7 @@ components:
     TenantIDQuery:
       name: tenant_id
       in: query
+      description: Development-only tenant selector. If `X-Bedem-Tenant-ID` is present, this value must match it.
       schema:
         type: string
     AppIDQuery:

@@ -17,6 +17,8 @@ import (
 	"github.com/bedemwaf/bedemwaf/services/control-api/internal/models"
 )
 
+const tenantIDContextKey contextKey = "tenant_id"
+
 type Server struct {
 	repo                  db.Repository
 	eventStore            events.Store
@@ -58,27 +60,33 @@ func (s *Server) ConfigureSecurity(cfg SecurityConfig) {
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
+	adminGlobal := func(handler http.HandlerFunc) http.Handler {
+		return s.requireAuth(handler)
+	}
+	adminTenant := func(handler http.HandlerFunc) http.Handler {
+		return s.requireAuth(s.requireTenant(handler))
+	}
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /readyz", s.readyz)
-	mux.Handle("GET /v1/tenants", s.requireAuth(http.HandlerFunc(s.listTenants)))
-	mux.Handle("POST /v1/tenants", s.requireAuth(http.HandlerFunc(s.createTenant)))
-	mux.Handle("GET /v1/apps", s.requireAuth(http.HandlerFunc(s.listApps)))
-	mux.Handle("POST /v1/apps", s.requireAuth(http.HandlerFunc(s.createApp)))
-	mux.Handle("GET /v1/apps/{app_id}", s.requireAuth(http.HandlerFunc(s.getApp)))
-	mux.Handle("PATCH /v1/apps/{app_id}", s.requireAuth(http.HandlerFunc(s.patchApp)))
-	mux.Handle("GET /v1/apps/{app_id}/policies", s.requireAuth(http.HandlerFunc(s.listPolicies)))
-	mux.Handle("POST /v1/apps/{app_id}/policies", s.requireAuth(http.HandlerFunc(s.createPolicy)))
-	mux.Handle("GET /v1/apps/{app_id}/active-policy", s.requireAuth(http.HandlerFunc(s.getActivePolicy)))
-	mux.Handle("GET /v1/policies/{policy_id}", s.requireAuth(http.HandlerFunc(s.getPolicy)))
-	mux.Handle("PATCH /v1/policies/{policy_id}", s.requireAuth(http.HandlerFunc(s.patchPolicy)))
-	mux.Handle("POST /v1/policies/{policy_id}/publish", s.requireAuth(http.HandlerFunc(s.publishPolicy)))
-	mux.Handle("GET /v1/policies/{policy_id}/simulation-summary", s.requireAuth(http.HandlerFunc(s.getPolicySimulationSummary)))
-	mux.Handle("GET /v1/managed-rule-sets", s.requireAuth(http.HandlerFunc(s.listManagedRuleSets)))
-	mux.Handle("GET /v1/managed-rule-sets/{id}/versions", s.requireAuth(http.HandlerFunc(s.listManagedRuleVersions)))
-	mux.Handle("POST /v1/managed-rule-sets/{id}/versions/{version_id}/activate", s.requireAuth(http.HandlerFunc(s.activateManagedRuleVersion)))
+	mux.Handle("GET /v1/tenants", adminGlobal(s.listTenants))
+	mux.Handle("POST /v1/tenants", adminGlobal(s.createTenant))
+	mux.Handle("GET /v1/apps", adminTenant(s.listApps))
+	mux.Handle("POST /v1/apps", adminTenant(s.createApp))
+	mux.Handle("GET /v1/apps/{app_id}", adminTenant(s.getApp))
+	mux.Handle("PATCH /v1/apps/{app_id}", adminTenant(s.patchApp))
+	mux.Handle("GET /v1/apps/{app_id}/policies", adminTenant(s.listPolicies))
+	mux.Handle("POST /v1/apps/{app_id}/policies", adminTenant(s.createPolicy))
+	mux.Handle("GET /v1/apps/{app_id}/active-policy", adminTenant(s.getActivePolicy))
+	mux.Handle("GET /v1/policies/{policy_id}", adminTenant(s.getPolicy))
+	mux.Handle("PATCH /v1/policies/{policy_id}", adminTenant(s.patchPolicy))
+	mux.Handle("POST /v1/policies/{policy_id}/publish", adminTenant(s.publishPolicy))
+	mux.Handle("GET /v1/policies/{policy_id}/simulation-summary", adminTenant(s.getPolicySimulationSummary))
+	mux.Handle("GET /v1/managed-rule-sets", adminGlobal(s.listManagedRuleSets))
+	mux.Handle("GET /v1/managed-rule-sets/{id}/versions", adminGlobal(s.listManagedRuleVersions))
+	mux.Handle("POST /v1/managed-rule-sets/{id}/versions/{version_id}/activate", adminGlobal(s.activateManagedRuleVersion))
 	mux.Handle("GET /v1/gateway/apps/{hostname}/policy", s.requireGatewayAuth(http.HandlerFunc(s.getGatewayPolicy)))
-	mux.Handle("GET /v1/events", s.requireAuth(http.HandlerFunc(s.listEvents)))
-	mux.Handle("GET /v1/events/{event_id}", s.requireAuth(http.HandlerFunc(s.getEvent)))
+	mux.Handle("GET /v1/events", adminTenant(s.listEvents))
+	mux.Handle("GET /v1/events/{event_id}", adminTenant(s.getEvent))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusNotFound, "not_found", "route not found")
 	})
@@ -136,7 +144,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
-	apps, err := s.repo.ListApps(r.Context())
+	apps, err := s.repo.ListApps(r.Context(), tenantIDFromContext(r.Context()))
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -147,6 +155,14 @@ func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateAppRequest
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+	tenantID := tenantIDFromContext(r.Context())
+	req.TenantID = strings.TrimSpace(req.TenantID)
+	if req.TenantID == "" {
+		req.TenantID = tenantID
+	} else if req.TenantID != tenantID {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "tenant_id must match tenant context")
 		return
 	}
 	originURL, ok := s.validateCreateApp(w, r, &req)
@@ -162,7 +178,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getApp(w http.ResponseWriter, r *http.Request) {
-	app, err := s.repo.GetApp(r.Context(), r.PathValue("app_id"))
+	app, err := s.repo.GetApp(r.Context(), tenantIDFromContext(r.Context()), r.PathValue("app_id"))
 	if err != nil {
 		s.handleReadError(w, r, err)
 		return
@@ -179,7 +195,7 @@ func (s *Server) patchApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	app, err := s.repo.UpdateApp(r.Context(), r.PathValue("app_id"), req, parsedOrigin)
+	app, err := s.repo.UpdateApp(r.Context(), tenantIDFromContext(r.Context()), r.PathValue("app_id"), req, parsedOrigin)
 	if err != nil {
 		s.handleReadError(w, r, err)
 		return
@@ -188,7 +204,7 @@ func (s *Server) patchApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listPolicies(w http.ResponseWriter, r *http.Request) {
-	policies, err := s.repo.ListPoliciesByApp(r.Context(), r.PathValue("app_id"))
+	policies, err := s.repo.ListPoliciesByApp(r.Context(), tenantIDFromContext(r.Context()), r.PathValue("app_id"))
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -217,7 +233,7 @@ func (s *Server) createPolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	policy, err := s.repo.CreatePolicy(r.Context(), r.PathValue("app_id"), req)
+	policy, err := s.repo.CreatePolicy(r.Context(), tenantIDFromContext(r.Context()), r.PathValue("app_id"), req)
 	if err != nil {
 		s.handleReadError(w, r, err)
 		return
@@ -226,7 +242,7 @@ func (s *Server) createPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getPolicy(w http.ResponseWriter, r *http.Request) {
-	policy, err := s.repo.GetPolicy(r.Context(), r.PathValue("policy_id"))
+	policy, err := s.repo.GetPolicy(r.Context(), tenantIDFromContext(r.Context()), r.PathValue("policy_id"))
 	if err != nil {
 		s.handleReadError(w, r, err)
 		return
@@ -242,7 +258,7 @@ func (s *Server) patchPolicy(w http.ResponseWriter, r *http.Request) {
 	if !s.validateUpdatePolicy(w, r, &req) {
 		return
 	}
-	policy, err := s.repo.UpdatePolicy(r.Context(), r.PathValue("policy_id"), req)
+	policy, err := s.repo.UpdatePolicy(r.Context(), tenantIDFromContext(r.Context()), r.PathValue("policy_id"), req)
 	if err != nil {
 		s.handleReadError(w, r, err)
 		return
@@ -252,7 +268,8 @@ func (s *Server) patchPolicy(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) publishPolicy(w http.ResponseWriter, r *http.Request) {
 	policyID := r.PathValue("policy_id")
-	policy, err := s.repo.GetPolicy(r.Context(), policyID)
+	tenantID := tenantIDFromContext(r.Context())
+	policy, err := s.repo.GetPolicy(r.Context(), tenantID, policyID)
 	if err != nil {
 		s.handleReadError(w, r, err)
 		return
@@ -261,7 +278,7 @@ func (s *Server) publishPolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "invalid_policy", err.Error())
 		return
 	}
-	published, err := s.repo.PublishPolicy(r.Context(), policyID)
+	published, err := s.repo.PublishPolicy(r.Context(), tenantID, policyID)
 	if err != nil {
 		s.handleReadError(w, r, err)
 		return
@@ -270,7 +287,7 @@ func (s *Server) publishPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getPolicySimulationSummary(w http.ResponseWriter, r *http.Request) {
-	filters, ok := parseSimulationFilters(w, r, r.PathValue("policy_id"))
+	filters, ok := parseSimulationFilters(w, r, tenantIDFromContext(r.Context()), r.PathValue("policy_id"))
 	if !ok {
 		return
 	}
@@ -288,7 +305,7 @@ func (s *Server) getPolicySimulationSummary(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) getActivePolicy(w http.ResponseWriter, r *http.Request) {
-	policy, err := s.repo.GetActivePolicyByApp(r.Context(), r.PathValue("app_id"))
+	policy, err := s.repo.GetActivePolicyByApp(r.Context(), tenantIDFromContext(r.Context()), r.PathValue("app_id"))
 	if err != nil {
 		s.handleReadError(w, r, err)
 		return
@@ -296,13 +313,13 @@ func (s *Server) getActivePolicy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, policy)
 }
 
-func parseSimulationFilters(w http.ResponseWriter, r *http.Request, policyID string) (events.SearchFilters, bool) {
+func parseSimulationFilters(w http.ResponseWriter, r *http.Request, tenantID string, policyID string) (events.SearchFilters, bool) {
 	policyID = strings.TrimSpace(policyID)
 	if policyID == "" {
 		writeError(w, r, http.StatusBadRequest, "invalid_request", "policy_id is required")
 		return events.SearchFilters{}, false
 	}
-	filters := events.SearchFilters{PolicyID: policyID, Limit: events.MaxLimit}
+	filters := events.SearchFilters{TenantID: tenantID, PolicyID: policyID, Limit: events.MaxLimit}
 	values := r.URL.Query()
 	if raw := values.Get("from"); raw != "" {
 		parsed, err := time.Parse(time.RFC3339, raw)
@@ -369,7 +386,7 @@ func (s *Server) activateManagedRuleVersion(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
-	filters, ok := parseEventFilters(w, r)
+	filters, ok := parseEventFilters(w, r, tenantIDFromContext(r.Context()))
 	if !ok {
 		return
 	}
@@ -381,8 +398,12 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"events": events})
 }
 
-func parseEventFilters(w http.ResponseWriter, r *http.Request) (events.SearchFilters, bool) {
+func parseEventFilters(w http.ResponseWriter, r *http.Request, tenantID string) (events.SearchFilters, bool) {
 	values := r.URL.Query()
+	if queryTenant := strings.TrimSpace(values.Get("tenant_id")); queryTenant != "" && queryTenant != tenantID {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "tenant_id query parameter must match tenant context")
+		return events.SearchFilters{}, false
+	}
 	limit := events.DefaultLimit
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
@@ -393,7 +414,7 @@ func parseEventFilters(w http.ResponseWriter, r *http.Request) (events.SearchFil
 		limit = parsed
 	}
 	filters := events.SearchFilters{
-		TenantID:      values.Get("tenant_id"),
+		TenantID:      tenantID,
 		AppID:         values.Get("app_id"),
 		Host:          values.Get("host"),
 		Action:        values.Get("action"),
@@ -425,7 +446,7 @@ func parseEventFilters(w http.ResponseWriter, r *http.Request) (events.SearchFil
 }
 
 func (s *Server) getEvent(w http.ResponseWriter, r *http.Request) {
-	event, err := s.eventStore.GetByRequestID(r.Context(), r.PathValue("event_id"))
+	event, err := s.eventStore.GetByRequestID(r.Context(), tenantIDFromContext(r.Context()), r.PathValue("event_id"))
 	if err != nil {
 		if errors.Is(err, events.ErrNotFound) {
 			writeError(w, r, http.StatusNotFound, "not_found", "event not found")
@@ -601,6 +622,33 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		// TODO: add a persistent per-token/admin-IP rate limiter before production.
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) requireTenant(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		headerTenantID := strings.TrimSpace(r.Header.Get("X-Bedem-Tenant-ID"))
+		queryTenantID := strings.TrimSpace(r.URL.Query().Get("tenant_id"))
+		if headerTenantID != "" && queryTenantID != "" && headerTenantID != queryTenantID {
+			writeError(w, r, http.StatusBadRequest, "invalid_request", "tenant_id query parameter must match tenant context")
+			return
+		}
+		tenantID := headerTenantID
+		if tenantID == "" {
+			// Development convenience only: production clients should use X-Bedem-Tenant-ID.
+			tenantID = queryTenantID
+		}
+		if tenantID == "" {
+			writeError(w, r, http.StatusBadRequest, "tenant_required", "tenant context is required")
+			return
+		}
+		ctx := context.WithValue(r.Context(), tenantIDContextKey, tenantID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func tenantIDFromContext(ctx context.Context) string {
+	tenantID, _ := ctx.Value(tenantIDContextKey).(string)
+	return tenantID
 }
 
 func (s *Server) requireGatewayAuth(next http.Handler) http.Handler {

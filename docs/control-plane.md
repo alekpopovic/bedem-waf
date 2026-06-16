@@ -63,6 +63,16 @@ Responsibilities:
 - Expose OpenAPI documentation
 - Produce gateway-readable policy snapshots
 
+Tenant context:
+
+- Tenant-scoped admin routes require `X-Bedem-Tenant-ID`.
+- `tenant_id` query selection is accepted only for local development when the
+  header is absent.
+- Apps, origins, policies, custom rules, IP sets, rate limits, and events are
+  queried with tenant predicates.
+- Cross-tenant reads and writes return `404 not_found` rather than revealing
+  resource ownership.
+
 MVP resources:
 
 - Tenants

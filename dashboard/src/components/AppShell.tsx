@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { clearStoredApiKey, getControlApiUrl, getStoredApiKey } from "../lib/api";
+import { clearStoredApiKey, clearStoredTenantId, getControlApiUrl, getStoredApiKey, getStoredTenantId } from "../lib/api";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard" },
@@ -18,7 +18,7 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (!getStoredApiKey()) {
+    if (!getStoredApiKey() || !getStoredTenantId()) {
       router.replace("/login");
       return;
     }
@@ -51,12 +51,14 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
           <strong>{section}</strong>
           <div className="actions">
             <span className="env-pill">Development mode</span>
+            <span className="muted">Tenant: {getStoredTenantId()}</span>
             <span className="muted">{getControlApiUrl()}</span>
             <button
               className="button secondary"
               type="button"
               onClick={() => {
                 clearStoredApiKey();
+                clearStoredTenantId();
                 router.replace("/login");
               }}
             >

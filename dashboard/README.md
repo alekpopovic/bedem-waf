@@ -20,9 +20,10 @@ Set the Control API URL exposed to the browser:
 export NEXT_PUBLIC_CONTROL_API_URL="http://localhost:8081"
 ```
 
-The admin API key is entered on `/login` and stored in browser `localStorage`.
-This is development-only behavior. TODO: replace with proper session
-authentication before production use.
+The admin API key and tenant ID are entered on `/login` and stored in browser
+`localStorage`. The tenant ID is sent as `X-Bedem-Tenant-ID` for tenant-scoped
+admin routes. This is development-only behavior. TODO: replace with proper
+session authentication before production use.
 
 ## Run
 

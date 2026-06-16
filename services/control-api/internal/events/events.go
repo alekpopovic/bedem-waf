@@ -64,7 +64,7 @@ type Event struct {
 
 type Store interface {
 	Search(context.Context, SearchFilters) ([]Event, error)
-	GetByRequestID(context.Context, string) (Event, error)
+	GetByRequestID(context.Context, string, string) (Event, error)
 }
 
 type SimulationRuleSummary struct {
@@ -123,18 +123,23 @@ func (s *HTTPStore) Search(ctx context.Context, filters SearchFilters) ([]Event,
 	return decodeEvents(data)
 }
 
-func (s *HTTPStore) GetByRequestID(ctx context.Context, requestID string) (Event, error) {
+func (s *HTTPStore) GetByRequestID(ctx context.Context, tenantID string, requestID string) (Event, error) {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return Event{}, errors.New("tenant_id is required")
+	}
 	requestID = strings.TrimSpace(requestID)
 	if requestID == "" {
 		return Event{}, errors.New("request_id is required")
 	}
 	query := selectFields() + `
 FROM waf_events
-WHERE request_id = {request_id:String}
+WHERE tenant_id = {tenant_id:String}
+  AND request_id = {request_id:String}
 ORDER BY timestamp DESC
 LIMIT 1
 FORMAT JSONEachRow`
-	data, err := s.query(ctx, query, map[string]string{"request_id": requestID})
+	data, err := s.query(ctx, query, map[string]string{"tenant_id": tenantID, "request_id": requestID})
 	if err != nil {
 		return Event{}, err
 	}

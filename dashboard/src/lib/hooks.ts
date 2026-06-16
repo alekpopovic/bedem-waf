@@ -1,21 +1,23 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ControlApiClient, getStoredApiKey } from "./api";
+import { ControlApiClient, getStoredApiKey, getStoredTenantId } from "./api";
 
 export function useApiClient(): ControlApiClient | null {
   const [apiKey, setApiKey] = useState("");
+  const [tenantId, setTenantId] = useState("");
 
   useEffect(() => {
     setApiKey(getStoredApiKey());
+    setTenantId(getStoredTenantId());
   }, []);
 
   return useMemo(() => {
-    if (!apiKey) {
+    if (!apiKey || !tenantId) {
       return null;
     }
-    return new ControlApiClient(apiKey);
-  }, [apiKey]);
+    return new ControlApiClient(apiKey, tenantId);
+  }, [apiKey, tenantId]);
 }
 
 export function formatDate(value?: string): string {

@@ -63,6 +63,15 @@ All `/v1` routes require:
 Authorization: Bearer <BEDEMWAF_ADMIN_API_KEY>
 ```
 
+Tenant-scoped admin routes also require:
+
+```http
+X-Bedem-Tenant-ID: <tenant-id>
+```
+
+For local development only, `?tenant_id=<tenant-id>` is accepted when the
+header is absent. If both are present they must match.
+
 Set a shell helper:
 
 ```bash
@@ -91,8 +100,10 @@ curl -s "$API/v1/tenants" -H "$AUTH"
 Create an app and primary origin:
 
 ```bash
+TENANT="X-Bedem-Tenant-ID: $TENANT_ID"
 APP_ID=$(curl -s -X POST "$API/v1/apps" \
   -H "$AUTH" \
+  -H "$TENANT" \
   -H "Content-Type: application/json" \
   -d '{
     "tenant_id":"'"$TENANT_ID"'",
@@ -108,6 +119,7 @@ Create a policy draft:
 ```bash
 POLICY_ID=$(curl -s -X POST "$API/v1/apps/$APP_ID/policies" \
   -H "$AUTH" \
+  -H "$TENANT" \
   -H "Content-Type: application/json" \
   -d '{
     "name":"Default policy",
@@ -143,9 +155,10 @@ POLICY_ID=$(curl -s -X POST "$API/v1/apps/$APP_ID/policies" \
 Update a policy draft with optimistic locking:
 
 ```bash
-UPDATED_AT=$(curl -s "$API/v1/policies/$POLICY_ID" -H "$AUTH" | jq -r .updated_at)
+UPDATED_AT=$(curl -s "$API/v1/policies/$POLICY_ID" -H "$AUTH" -H "$TENANT" | jq -r .updated_at)
 curl -s -X PATCH "$API/v1/policies/$POLICY_ID" \
   -H "$AUTH" \
+  -H "$TENANT" \
   -H "Content-Type: application/json" \
   -d '{
     "expected_updated_at":"'"$UPDATED_AT"'",
@@ -158,13 +171,13 @@ Publish a policy to create an immutable version and advance the active
 deployment pointer:
 
 ```bash
-curl -s -X POST "$API/v1/policies/$POLICY_ID/publish" -H "$AUTH"
+curl -s -X POST "$API/v1/policies/$POLICY_ID/publish" -H "$AUTH" -H "$TENANT"
 ```
 
 Fetch the active compiled policy as an admin:
 
 ```bash
-curl -s "$API/v1/apps/$APP_ID/active-policy" -H "$AUTH"
+curl -s "$API/v1/apps/$APP_ID/active-policy" -H "$AUTH" -H "$TENANT"
 ```
 
 Fetch the gateway-ready policy by hostname using the gateway key:
@@ -184,8 +197,8 @@ curl -s -X POST "$API/v1/managed-rule-sets/<id>/versions/<version_id>/activate" 
 Search event references:
 
 ```bash
-curl -s "$API/v1/events?limit=50" -H "$AUTH"
-curl -s "$API/v1/events/<request_id>" -H "$AUTH"
+curl -s "$API/v1/events?limit=50" -H "$AUTH" -H "$TENANT"
+curl -s "$API/v1/events/<request_id>" -H "$AUTH" -H "$TENANT"
 ```
 
 ## Error Shape
@@ -206,6 +219,8 @@ All API errors use:
 
 - Authentication uses static API keys for MVP: one admin key and one separate
   gateway key.
+- Tenant-scoped admin routes require explicit tenant context through
+  `X-Bedem-Tenant-ID`.
 - Policy snapshots are stored as JSON in policy metadata until publish creates an
   immutable `policy_versions` row.
 - Publishing compiles gateway-ready JSON and atomically advances the active

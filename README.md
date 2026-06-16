@@ -210,6 +210,7 @@ Next implementation steps:
 - [Threat Model](docs/threat-model.md)
 - [Local Development](docs/local-development.md)
 - [Policy Model](docs/policy-model.md)
+- [Tenant Model](docs/tenant-model.md)
 - [Database Schema](docs/database-schema.md)
 - [Event Schema](docs/event-schema.md)
 - [OpenAPI](docs/openapi.yaml)

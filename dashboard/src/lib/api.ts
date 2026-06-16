@@ -11,6 +11,7 @@ import type {
 } from "./types";
 
 const API_KEY_STORAGE = "bedemwaf.admin_api_key";
+const TENANT_ID_STORAGE = "bedemwaf.tenant_id";
 
 export function getControlApiUrl(): string {
   return process.env.NEXT_PUBLIC_CONTROL_API_URL ?? "http://localhost:8081";
@@ -29,6 +30,21 @@ export function setStoredApiKey(value: string): void {
 
 export function clearStoredApiKey(): void {
   window.localStorage.removeItem(API_KEY_STORAGE);
+}
+
+export function getStoredTenantId(): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return window.localStorage.getItem(TENANT_ID_STORAGE) ?? "";
+}
+
+export function setStoredTenantId(value: string): void {
+  window.localStorage.setItem(TENANT_ID_STORAGE, value);
+}
+
+export function clearStoredTenantId(): void {
+  window.localStorage.removeItem(TENANT_ID_STORAGE);
 }
 
 export type EventFilters = {
@@ -68,9 +84,11 @@ export class ApiError extends Error {
 export class ControlApiClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
+  private readonly tenantId: string;
 
-  constructor(apiKey: string, baseUrl = getControlApiUrl()) {
+  constructor(apiKey: string, tenantId = "", baseUrl = getControlApiUrl()) {
     this.apiKey = apiKey;
+    this.tenantId = tenantId;
     this.baseUrl = baseUrl.replace(/\/$/, "");
   }
 
@@ -88,6 +106,7 @@ export class ControlApiClient {
     return this.request<App>("/v1/apps", {
       method: "POST",
       body: JSON.stringify(input),
+      headers: input.tenant_id ? { "X-Bedem-Tenant-ID": input.tenant_id } : undefined,
     });
   }
 
@@ -163,6 +182,7 @@ export class ControlApiClient {
         Accept: "application/json",
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.apiKey}`,
+        ...(this.tenantId ? { "X-Bedem-Tenant-ID": this.tenantId } : {}),
         ...init.headers,
       },
     });
