@@ -70,6 +70,8 @@ After every user prompt that changes files, Codex must prepare the work for the
 remote repository:
 
 1. Run relevant validation.
+   - If any `docs/*.md` file changed, rebuild the GitHub Pages output with
+     `python3 scripts/build-docs-site.py` before committing.
 2. Review `git status --short`.
 3. Stage the completed change with `git add`.
 4. Commit with a concise message.
