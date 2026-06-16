@@ -264,4 +264,4 @@ go test ./...
 
 - Add hot policy reload from the control plane.
 - Add richer Redis rate-limit keys.
-- Add Prometheus metrics.
+- Add production alert rules for exported Prometheus metrics.

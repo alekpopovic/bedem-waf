@@ -171,6 +171,7 @@ func (p *Provider) Lookup(ctx context.Context, host string) policy.LookupResult 
 		return policy.LookupResult{App: app, Found: true}
 	}
 	p.metrics.policyFetchErrorTotal.Add(1)
+	metrics.IncPolicyFetchError()
 	p.logger.Warn("policy_fetch_failed", "host", host, "error", err)
 
 	if stale, ok := p.cached(host); ok && stale.app != nil {

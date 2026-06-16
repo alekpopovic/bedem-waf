@@ -202,15 +202,14 @@ before: username=demo&password=hunter2&token=abc&page=1
 after:  page=1&password=%5BREDACTED%5D&token=%5BREDACTED%5D&username=demo
 ```
 
-## Metrics Placeholders
+## Audit Metrics
 
-The gateway audit dispatcher owns counters that will later be exported through
-Prometheus:
+The gateway exports Prometheus metrics for audit dispatcher backpressure and
+request decisions:
 
-- `events_sent_total`
-- `events_dropped_total`
-- `blocked_requests_total`
-- `allowed_requests_total`
+- `bedem_audit_events_dropped_total`
+- `bedem_requests_total`
+- `bedem_blocked_requests_total`
 
 ## MVP Scope
 
@@ -227,4 +226,4 @@ Prometheus:
 - Configurable sampling for high-volume count events.
 - GeoIP enrichment.
 - Origin ID and active policy version from the control plane.
-- Prometheus export for audit metrics.
+- More detailed audit delivery success/failure metrics.

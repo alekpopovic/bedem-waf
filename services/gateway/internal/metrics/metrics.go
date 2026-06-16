@@ -37,6 +37,10 @@ var (
 		Name: "bedem_policy_cache_misses_total",
 		Help: "Total remote policy cache misses.",
 	})
+	policyFetchErrorsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "bedem_policy_fetch_errors_total",
+		Help: "Total remote policy fetch errors.",
+	})
 	rateLimitedTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "bedem_rate_limited_total",
 		Help: "Total requests that matched a rate limit rule.",
@@ -55,6 +59,7 @@ func init() {
 		originDuration,
 		policyCacheHitsTotal,
 		policyCacheMissesTotal,
+		policyFetchErrorsTotal,
 		rateLimitedTotal,
 		auditEventsDroppedTotal,
 	)
@@ -82,6 +87,10 @@ func IncPolicyCacheHit() {
 
 func IncPolicyCacheMiss() {
 	policyCacheMissesTotal.Inc()
+}
+
+func IncPolicyFetchError() {
+	policyFetchErrorsTotal.Inc()
 }
 
 func IncRateLimited() {

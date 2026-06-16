@@ -31,6 +31,7 @@ The gateway records:
 - `bedem_origin_duration_seconds`: reverse proxy upstream latency.
 - `bedem_policy_cache_hits_total`: remote policy cache hits.
 - `bedem_policy_cache_misses_total`: remote policy cache misses.
+- `bedem_policy_fetch_errors_total`: remote policy fetch failures.
 - `bedem_rate_limited_total`: requests that matched a rate limit rule.
 - `bedem_audit_events_dropped_total`: audit events dropped because the async
   queue was full.
@@ -99,8 +100,9 @@ deployments/grafana/dashboards/bedemwaf-overview.json
 - Run Prometheus and Grafana on private management networks.
 - Protect `/metrics` endpoints from internet traffic.
 - Alert on high `bedem_blocked_requests_total`, sustained
-  `bedem_audit_events_dropped_total`, high request latency, policy cache miss
-  spikes, and worker job failures.
+  `bedem_audit_events_dropped_total`, high request latency,
+  `bedem_policy_fetch_errors_total`, policy cache miss spikes, and worker job
+  failures.
 - Keep labels bounded. Do not add raw path, query, IP, token, cookie, or header
   value labels without a cardinality and privacy review.
 - Correlate metrics with audit events through `request_id` in logs and events,
