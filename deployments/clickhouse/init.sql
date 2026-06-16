@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS bedemwaf.waf_events
     path String,
     action LowCardinality(String),
     mode LowCardinality(String),
+    enforced Bool,
+    would_block Bool,
     status UInt16,
     reason String,
     matched_rule_id String,

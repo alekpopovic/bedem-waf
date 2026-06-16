@@ -68,6 +68,8 @@ export type WafEvent = {
   path: string;
   action: string;
   mode: string;
+  enforced: boolean;
+  would_block: boolean;
   status: number;
   reason: string;
   matched_rule_id: string;
@@ -79,6 +81,22 @@ export type WafEvent = {
   latency_ms: number;
   origin_status: number;
   origin_latency_ms: number;
+};
+
+export type RuleSimulationSummary = {
+  rule_id: string;
+  rule_name: string;
+  would_block_count: number;
+  unique_ips: number;
+  top_paths: string[];
+  sample_request_ids: string[];
+};
+
+export type PolicySimulationSummary = {
+  policy_id: string;
+  from?: string;
+  to?: string;
+  rules: RuleSimulationSummary[];
 };
 
 export type CreateAppInput = {

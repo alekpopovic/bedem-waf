@@ -3,6 +3,7 @@ import type {
   CreateAppInput,
   CreatePolicyInput,
   GatewayPolicy,
+  PolicySimulationSummary,
   Policy,
   Tenant,
   UpdatePolicyInput,
@@ -121,6 +122,18 @@ export class ControlApiClient {
     return this.request(`/v1/policies/${encodeURIComponent(policyId)}/publish`, {
       method: "POST",
     });
+  }
+
+  async getPolicySimulationSummary(policyId: string, filters: Pick<EventFilters, "from" | "to"> = {}): Promise<PolicySimulationSummary> {
+    const params = new URLSearchParams();
+    if (filters.from) {
+      params.set("from", filters.from);
+    }
+    if (filters.to) {
+      params.set("to", filters.to);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return this.request<PolicySimulationSummary>(`/v1/policies/${encodeURIComponent(policyId)}/simulation-summary${suffix}`);
   }
 
   async getActivePolicy(appId: string): Promise<GatewayPolicy> {

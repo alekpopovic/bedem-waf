@@ -231,7 +231,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	enforced := decision.EnforcedAction(app.Mode, final)
-	event.Action = string(enforced)
+	event.Action = string(final.Action)
+	event.Enforced = app.Mode == decision.ModeBlock && final.WouldBlock()
+	event.WouldBlock = final.WouldBlock()
 	event.Reason = final.Reason
 	event.MatchedRuleID = final.MatchedRuleID
 	event.MatchedRuleName = final.MatchedRuleName
@@ -248,7 +250,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if app.Mode == decision.ModeBlock && final.WouldBlock() {
+	if enforced != decision.ActionAllow && app.Mode == decision.ModeBlock && final.WouldBlock() {
 		status := final.StatusCode
 		if status == 0 {
 			status = http.StatusForbidden

@@ -183,8 +183,11 @@ func TestCorazaCountModeAllowsButLogsWouldBlock(t *testing.T) {
 		t.Fatalf("status = %d, want 204", rec.Code)
 	}
 	event := decodeAuditEvent(t, auditOutput.Bytes())
-	if event["action"] != string(decision.ActionCount) {
-		t.Fatalf("audit action = %v, want count", event["action"])
+	if event["action"] != string(decision.ActionBlock) {
+		t.Fatalf("audit action = %v, want block", event["action"])
+	}
+	if event["would_block"] != true || event["enforced"] != false {
+		t.Fatalf("rollout fields would_block=%v enforced=%v, want true/false", event["would_block"], event["enforced"])
 	}
 	if event["matched_rule_id"] != "coraza:1000001" {
 		t.Fatalf("matched_rule_id = %v, want coraza:1000001", event["matched_rule_id"])
@@ -192,6 +195,7 @@ func TestCorazaCountModeAllowsButLogsWouldBlock(t *testing.T) {
 }
 
 func TestCorazaBlockModeReturns403(t *testing.T) {
+	var auditOutput bytes.Buffer
 	gateway := testGatewayWithOptions(t, testGatewayOptions{
 		mode:      "block",
 		originURL: "http://origin.local",
@@ -201,7 +205,7 @@ func TestCorazaBlockModeReturns403(t *testing.T) {
 			t.Fatal("origin should not be called for blocked request")
 			return nil, nil
 		}),
-		auditOut: io.Discard,
+		auditOut: &auditOutput,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "http://example.local/", nil)
@@ -213,6 +217,10 @@ func TestCorazaBlockModeReturns403(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	event := decodeAuditEvent(t, auditOutput.Bytes())
+	if event["action"] != string(decision.ActionBlock) || event["would_block"] != true || event["enforced"] != true {
+		t.Fatalf("event action=%v would_block=%v enforced=%v, want block true true", event["action"], event["would_block"], event["enforced"])
 	}
 }
 
@@ -387,7 +395,7 @@ func TestOversizedBodyBlocksInBlockMode(t *testing.T) {
 	}
 }
 
-func TestCustomRuleDecisionIncludedInAuditEvent(t *testing.T) {
+func TestCountModeAllowsCustomRuleBlockButLogsWouldBlock(t *testing.T) {
 	var auditOutput bytes.Buffer
 	gateway := testGatewayWithOptions(t, testGatewayOptions{
 		mode:      "count",
@@ -410,11 +418,43 @@ func TestCustomRuleDecisionIncludedInAuditEvent(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	event := decodeAuditEvent(t, auditOutput.Bytes())
-	if event["action"] != string(decision.ActionCount) {
-		t.Fatalf("audit action = %v, want count", event["action"])
+	if event["action"] != string(decision.ActionBlock) {
+		t.Fatalf("audit action = %v, want block", event["action"])
+	}
+	if event["would_block"] != true || event["enforced"] != false {
+		t.Fatalf("rollout fields would_block=%v enforced=%v, want true/false", event["would_block"], event["enforced"])
 	}
 	if event["matched_rule_id"] != "rule-admin" {
 		t.Fatalf("matched_rule_id = %v, want rule-admin", event["matched_rule_id"])
+	}
+}
+
+func TestBlockModeBlocksCustomRule(t *testing.T) {
+	var auditOutput bytes.Buffer
+	gateway := testGatewayWithOptions(t, testGatewayOptions{
+		mode:      "block",
+		originURL: "http://origin.local",
+		limiter:   ratelimit.NoopLimiter{},
+		waf:       waf.AllowEngine{},
+		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			t.Fatal("origin should not be called for blocked custom rule")
+			return nil, nil
+		}),
+		auditOut: &auditOutput,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.local/admin", nil)
+	req.RemoteAddr = "198.51.100.10:12345"
+	rec := httptest.NewRecorder()
+
+	gateway.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	event := decodeAuditEvent(t, auditOutput.Bytes())
+	if event["action"] != string(decision.ActionBlock) || event["would_block"] != true || event["enforced"] != true {
+		t.Fatalf("event action=%v would_block=%v enforced=%v, want block true true", event["action"], event["would_block"], event["enforced"])
 	}
 }
 

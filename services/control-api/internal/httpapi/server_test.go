@@ -248,6 +248,44 @@ func TestPublishFlowCreatesImmutableVersionAndActiveGatewayPolicy(t *testing.T) 
 	}
 }
 
+func TestPolicySimulationSummary(t *testing.T) {
+	eventStore := &fakeEventStore{}
+	handler := NewServer(newFakeRepo(), eventStore, auth.NewStaticBearer("test-admin-key"), auth.NewStaticBearer("test-gateway-key"), nil).Routes()
+	req := authedRequest(http.MethodGet, "/v1/policies/policy-1/simulation-summary?from=2026-06-16T10:00:00Z&to=2026-06-16T11:00:00Z", bytes.NewBuffer(nil))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if eventStore.lastFilters.PolicyID != "policy-1" || eventStore.lastFilters.Limit != events.MaxLimit {
+		t.Fatalf("filters = %+v, want policy simulation filters", eventStore.lastFilters)
+	}
+	var got struct {
+		Rules []events.SimulationRuleSummary `json:"rules"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(got.Rules) != 1 || got.Rules[0].RuleID != "rule-admin" || got.Rules[0].WouldBlockCount != 2 || got.Rules[0].UniqueIPs != 2 {
+		t.Fatalf("summary = %+v, want aggregated would-block rule", got.Rules)
+	}
+}
+
+func TestPolicySimulationSummaryDateRangeValidation(t *testing.T) {
+	handler := testServer(t).Routes()
+	req := authedRequest(http.MethodGet, "/v1/policies/policy-1/simulation-summary?from=2026-06-16T11:00:00Z&to=2026-06-16T10:00:00Z", bytes.NewBuffer(nil))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	assertErrorShape(t, rec.Body.Bytes(), "invalid_request")
+}
+
 func TestGatewayPolicyRequiresGatewayToken(t *testing.T) {
 	handler := testServer(t).Routes()
 	req := httptest.NewRequest(http.MethodGet, "/v1/gateway/apps/example.local/policy", nil)
@@ -605,7 +643,11 @@ type fakeEventStore struct {
 
 func (f *fakeEventStore) Search(_ context.Context, filters events.SearchFilters) ([]events.Event, error) {
 	f.lastFilters = filters
-	return []events.Event{{RequestID: "req-1", TenantID: filters.TenantID}}, nil
+	return []events.Event{
+		{RequestID: "req-1", TenantID: filters.TenantID, PolicyID: filters.PolicyID, ClientIP: "198.51.100.10", Path: "/admin", MatchedRuleID: "rule-admin", MatchedRuleName: "Admin block", WouldBlock: true},
+		{RequestID: "req-2", TenantID: filters.TenantID, PolicyID: filters.PolicyID, ClientIP: "198.51.100.11", Path: "/admin/users", MatchedRuleID: "rule-admin", MatchedRuleName: "Admin block", WouldBlock: true},
+		{RequestID: "req-3", TenantID: filters.TenantID, PolicyID: filters.PolicyID, ClientIP: "198.51.100.12", Path: "/", MatchedRuleID: "", WouldBlock: false},
+	}, nil
 }
 
 func (f *fakeEventStore) GetByRequestID(_ context.Context, requestID string) (events.Event, error) {

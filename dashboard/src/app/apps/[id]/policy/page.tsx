@@ -110,6 +110,9 @@ export default function PolicyEditorPage() {
       {message ? <div className="notice">{message}</div> : null}
       {!loading ? (
         <section className="card form">
+          <div className="notice">
+            Count mode records rules that would block without denying requests. Block mode enforces block and rate-limit decisions.
+          </div>
           <div className="field">
             <label htmlFor="policy-json">Policy JSON</label>
             <textarea id="policy-json" value={jsonText} onChange={(event) => setJsonText(event.target.value)} spellCheck={false} />

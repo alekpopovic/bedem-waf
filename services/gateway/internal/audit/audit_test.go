@@ -77,6 +77,8 @@ func TestEventJSONSchemaStabilitySnapshot(t *testing.T) {
 		UserAgent:       "BedemTest/1.0",
 		Action:          "block",
 		Mode:            "block",
+		Enforced:        true,
+		WouldBlock:      true,
 		Status:          403,
 		Reason:          "custom_rule",
 		MatchedRuleID:   "rule-login",
@@ -107,7 +109,7 @@ func TestEventJSONSchemaStabilitySnapshot(t *testing.T) {
 	for _, field := range []string{
 		"timestamp", "request_id", "tenant_id", "app_id", "policy_id", "policy_version",
 		"host", "client_ip", "country", "method", "path", "query_redacted", "user_agent",
-		"action", "mode", "status", "reason", "matched_rule_id", "matched_rule_name",
+		"action", "mode", "enforced", "would_block", "status", "reason", "matched_rule_id", "matched_rule_name",
 		"rule_group", "tags", "anomaly_score", "rate_limit", "latency_ms",
 	} {
 		if _, ok := got[field]; !ok {

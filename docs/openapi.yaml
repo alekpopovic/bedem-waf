@@ -373,6 +373,28 @@ paths:
         "404":
           $ref: "#/components/responses/Error"
 
+  /v1/policies/{policy_id}/simulation-summary:
+    get:
+      tags: [Policies]
+      summary: Summarize would-block events for safe rollout
+      security:
+        - AdminBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PolicyID"
+        - $ref: "#/components/parameters/FromQuery"
+        - $ref: "#/components/parameters/ToQuery"
+      responses:
+        "200":
+          description: Policy simulation summary grouped by matching rule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicySimulationSummary"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+
   /v1/managed-rule-sets:
     get:
       tags: [Managed Rules]
@@ -881,6 +903,46 @@ components:
           type: string
           format: date-time
 
+    PolicySimulationSummary:
+      type: object
+      required: [policy_id, rules]
+      properties:
+        policy_id:
+          type: string
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/RuleSimulationSummary"
+
+    RuleSimulationSummary:
+      type: object
+      required: [rule_id, rule_name, would_block_count, unique_ips, top_paths, sample_request_ids]
+      properties:
+        rule_id:
+          type: string
+        rule_name:
+          type: string
+        would_block_count:
+          type: integer
+          minimum: 0
+        unique_ips:
+          type: integer
+          minimum: 0
+        top_paths:
+          type: array
+          items:
+            type: string
+        sample_request_ids:
+          type: array
+          items:
+            type: string
+
     PolicyVersion:
       type: object
       description: Immutable published policy version.
@@ -1184,6 +1246,8 @@ components:
         - path
         - action
         - mode
+        - enforced
+        - would_block
         - status
       properties:
         timestamp:
@@ -1211,6 +1275,10 @@ components:
           $ref: "#/components/schemas/Action"
         mode:
           $ref: "#/components/schemas/Mode"
+        enforced:
+          type: boolean
+        would_block:
+          type: boolean
         status:
           type: integer
           minimum: 100

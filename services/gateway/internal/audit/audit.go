@@ -32,6 +32,8 @@ type Event struct {
 	UserAgent       string     `json:"user_agent"`
 	Action          string     `json:"action"`
 	Mode            string     `json:"mode"`
+	Enforced        bool       `json:"enforced"`
+	WouldBlock      bool       `json:"would_block"`
 	Status          int        `json:"status"`
 	Reason          string     `json:"reason"`
 	MatchedRuleID   string     `json:"matched_rule_id"`
@@ -143,6 +145,8 @@ func (s *ClickHouseSink) Write(ctx context.Context, event Event) error {
 		Path:            event.Path,
 		Action:          event.Action,
 		Mode:            event.Mode,
+		Enforced:        event.Enforced,
+		WouldBlock:      event.WouldBlock,
 		Status:          clampUInt16(event.Status),
 		Reason:          event.Reason,
 		MatchedRuleID:   event.MatchedRuleID,
@@ -192,6 +196,8 @@ type clickHouseEvent struct {
 	Path            string   `json:"path"`
 	Action          string   `json:"action"`
 	Mode            string   `json:"mode"`
+	Enforced        bool     `json:"enforced"`
+	WouldBlock      bool     `json:"would_block"`
 	Status          uint16   `json:"status"`
 	Reason          string   `json:"reason"`
 	MatchedRuleID   string   `json:"matched_rule_id"`

@@ -51,8 +51,10 @@ The gateway emits one JSON object per line.
 | `path` | string | URL path without query string. |
 | `query_redacted` | string | Query string after sensitive parameter redaction. |
 | `user_agent` | string | User-Agent header value. |
-| `action` | string | Final action after policy mode: `allow`, `count`, `block`, or `rate_limit`. |
+| `action` | string | Rule decision intent: `allow`, `count`, `block`, or `rate_limit`. |
 | `mode` | string | Policy mode: `count` or `block`. |
+| `enforced` | boolean | True when BedemWAF actually denied the request. |
+| `would_block` | boolean | True when the rule decision would deny the request in block mode. |
 | `status` | number | Response status returned to the client. |
 | `reason` | string | Decision reason, for example `ip_blocklist`, `custom_rule`, `waf_match`, or `rate_limit`. |
 | `matched_rule_id` | string | Rule or synthetic rule ID that caused the decision. |
@@ -94,6 +96,8 @@ The gateway emits one JSON object per line.
   "user_agent": "ExampleClient/1.0",
   "action": "allow",
   "mode": "count",
+  "enforced": false,
+  "would_block": false,
   "status": 200,
   "latency_ms": 14,
   "origin_status": 200,
@@ -116,8 +120,10 @@ The gateway emits one JSON object per line.
   "path": "/admin",
   "query_redacted": "token=%5BREDACTED%5D",
   "user_agent": "ExampleClient/1.0",
-  "action": "count",
+  "action": "block",
   "mode": "count",
+  "enforced": false,
+  "would_block": true,
   "status": 200,
   "reason": "custom_rule",
   "matched_rule_id": "rule-admin-office-only",
@@ -147,6 +153,8 @@ The gateway emits one JSON object per line.
   "user_agent": "ExampleClient/1.0",
   "action": "rate_limit",
   "mode": "block",
+  "enforced": true,
+  "would_block": true,
   "status": 429,
   "reason": "rate_limit",
   "matched_rule_id": "rate_limit:rl-login",
@@ -208,7 +216,7 @@ Prometheus:
 
 - JSON stdout sink is implemented.
 - Async bounded dispatcher is implemented.
-- ClickHouse sink exists as a placeholder and does not write data yet.
+- ClickHouse sink can write JSONEachRow audit events when configured.
 - Events are emitted as one JSON object per line.
 - Full request body logging is disabled by default.
 

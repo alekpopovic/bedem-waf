@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ const (
 type SearchFilters struct {
 	TenantID      string
 	AppID         string
+	PolicyID      string
 	Host          string
 	Action        string
 	ClientIP      string
@@ -45,6 +47,8 @@ type Event struct {
 	Path            string    `json:"path"`
 	Action          string    `json:"action"`
 	Mode            string    `json:"mode"`
+	Enforced        bool      `json:"enforced"`
+	WouldBlock      bool      `json:"would_block"`
 	Status          uint16    `json:"status"`
 	Reason          string    `json:"reason"`
 	MatchedRuleID   string    `json:"matched_rule_id"`
@@ -61,6 +65,15 @@ type Event struct {
 type Store interface {
 	Search(context.Context, SearchFilters) ([]Event, error)
 	GetByRequestID(context.Context, string) (Event, error)
+}
+
+type SimulationRuleSummary struct {
+	RuleID           string   `json:"rule_id"`
+	RuleName         string   `json:"rule_name"`
+	WouldBlockCount  int      `json:"would_block_count"`
+	UniqueIPs        int      `json:"unique_ips"`
+	TopPaths         []string `json:"top_paths"`
+	SampleRequestIDs []string `json:"sample_request_ids"`
 }
 
 type HTTPStore struct {
@@ -160,6 +173,7 @@ func BuildSearchQuery(filters SearchFilters) (string, map[string]string, error) 
 	}
 	addStringFilter("tenant_id", "tenant_id", filters.TenantID)
 	addStringFilter("app_id", "app_id", filters.AppID)
+	addStringFilter("policy_id", "policy_id", filters.PolicyID)
 	addStringFilter("host", "host", filters.Host)
 	addStringFilter("action", "action", filters.Action)
 	addStringFilter("client_ip", "client_ip", filters.ClientIP)
@@ -180,6 +194,84 @@ ORDER BY timestamp DESC
 LIMIT {limit:UInt32}
 FORMAT JSONEachRow`
 	return query, params, nil
+}
+
+func BuildSimulationSummary(input []Event) []SimulationRuleSummary {
+	type accumulator struct {
+		ruleName string
+		count    int
+		ips      map[string]struct{}
+		paths    map[string]int
+		samples  []string
+	}
+	byRule := map[string]*accumulator{}
+	for _, event := range input {
+		if !event.WouldBlock {
+			continue
+		}
+		ruleID := strings.TrimSpace(event.MatchedRuleID)
+		if ruleID == "" {
+			ruleID = "unknown"
+		}
+		got := byRule[ruleID]
+		if got == nil {
+			got = &accumulator{ruleName: event.MatchedRuleName, ips: map[string]struct{}{}, paths: map[string]int{}}
+			byRule[ruleID] = got
+		}
+		got.count++
+		if event.ClientIP != "" {
+			got.ips[event.ClientIP] = struct{}{}
+		}
+		if event.Path != "" {
+			got.paths[event.Path]++
+		}
+		if event.RequestID != "" && len(got.samples) < 5 {
+			got.samples = append(got.samples, event.RequestID)
+		}
+	}
+	out := make([]SimulationRuleSummary, 0, len(byRule))
+	for ruleID, got := range byRule {
+		out = append(out, SimulationRuleSummary{
+			RuleID:           ruleID,
+			RuleName:         got.ruleName,
+			WouldBlockCount:  got.count,
+			UniqueIPs:        len(got.ips),
+			TopPaths:         topPaths(got.paths, 5),
+			SampleRequestIDs: got.samples,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].WouldBlockCount == out[j].WouldBlockCount {
+			return out[i].RuleID < out[j].RuleID
+		}
+		return out[i].WouldBlockCount > out[j].WouldBlockCount
+	})
+	return out
+}
+
+func topPaths(counts map[string]int, limit int) []string {
+	type item struct {
+		path  string
+		count int
+	}
+	items := make([]item, 0, len(counts))
+	for path, count := range counts {
+		items = append(items, item{path: path, count: count})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].count == items[j].count {
+			return items[i].path < items[j].path
+		}
+		return items[i].count > items[j].count
+	})
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.path)
+	}
+	return out
 }
 
 func (s *HTTPStore) query(ctx context.Context, query string, params map[string]string) ([]byte, error) {
@@ -242,6 +334,8 @@ method,
 path,
 action,
 mode,
+enforced,
+would_block,
 status,
 reason,
 matched_rule_id,

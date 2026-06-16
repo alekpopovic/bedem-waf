@@ -72,6 +72,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /v1/policies/{policy_id}", s.requireAuth(http.HandlerFunc(s.getPolicy)))
 	mux.Handle("PATCH /v1/policies/{policy_id}", s.requireAuth(http.HandlerFunc(s.patchPolicy)))
 	mux.Handle("POST /v1/policies/{policy_id}/publish", s.requireAuth(http.HandlerFunc(s.publishPolicy)))
+	mux.Handle("GET /v1/policies/{policy_id}/simulation-summary", s.requireAuth(http.HandlerFunc(s.getPolicySimulationSummary)))
 	mux.Handle("GET /v1/managed-rule-sets", s.requireAuth(http.HandlerFunc(s.listManagedRuleSets)))
 	mux.Handle("GET /v1/managed-rule-sets/{id}/versions", s.requireAuth(http.HandlerFunc(s.listManagedRuleVersions)))
 	mux.Handle("POST /v1/managed-rule-sets/{id}/versions/{version_id}/activate", s.requireAuth(http.HandlerFunc(s.activateManagedRuleVersion)))
@@ -268,6 +269,24 @@ func (s *Server) publishPolicy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, published)
 }
 
+func (s *Server) getPolicySimulationSummary(w http.ResponseWriter, r *http.Request) {
+	filters, ok := parseSimulationFilters(w, r, r.PathValue("policy_id"))
+	if !ok {
+		return
+	}
+	found, err := s.eventStore.Search(r.Context(), filters)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"policy_id": filters.PolicyID,
+		"from":      filters.From,
+		"to":        filters.To,
+		"rules":     events.BuildSimulationSummary(found),
+	})
+}
+
 func (s *Server) getActivePolicy(w http.ResponseWriter, r *http.Request) {
 	policy, err := s.repo.GetActivePolicyByApp(r.Context(), r.PathValue("app_id"))
 	if err != nil {
@@ -275,6 +294,37 @@ func (s *Server) getActivePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, policy)
+}
+
+func parseSimulationFilters(w http.ResponseWriter, r *http.Request, policyID string) (events.SearchFilters, bool) {
+	policyID = strings.TrimSpace(policyID)
+	if policyID == "" {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "policy_id is required")
+		return events.SearchFilters{}, false
+	}
+	filters := events.SearchFilters{PolicyID: policyID, Limit: events.MaxLimit}
+	values := r.URL.Query()
+	if raw := values.Get("from"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, r, http.StatusBadRequest, "invalid_request", "from must be RFC3339")
+			return events.SearchFilters{}, false
+		}
+		filters.From = parsed
+	}
+	if raw := values.Get("to"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, r, http.StatusBadRequest, "invalid_request", "to must be RFC3339")
+			return events.SearchFilters{}, false
+		}
+		filters.To = parsed
+	}
+	if !filters.From.IsZero() && !filters.To.IsZero() && filters.From.After(filters.To) {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "from must be before to")
+		return events.SearchFilters{}, false
+	}
+	return filters, true
 }
 
 func (s *Server) getGatewayPolicy(w http.ResponseWriter, r *http.Request) {

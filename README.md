@@ -214,6 +214,7 @@ Next implementation steps:
 - [Event Schema](docs/event-schema.md)
 - [OpenAPI](docs/openapi.yaml)
 - [Managed Rules](docs/managed-rules.md)
+- [Safe Rollout](docs/safe-rollout.md)
 - [Security Hardening](docs/security-hardening.md)
 - [Production Checklist](docs/production-checklist.md)
 
