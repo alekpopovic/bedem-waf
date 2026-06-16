@@ -17,16 +17,17 @@ import (
 )
 
 type Server struct {
-	repo   db.Repository
-	auth   auth.StaticBearer
-	logger *slog.Logger
+	repo        db.Repository
+	adminAuth   auth.StaticBearer
+	gatewayAuth auth.StaticBearer
+	logger      *slog.Logger
 }
 
-func NewServer(repo db.Repository, authenticator auth.StaticBearer, logger *slog.Logger) *Server {
+func NewServer(repo db.Repository, adminAuth auth.StaticBearer, gatewayAuth auth.StaticBearer, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{repo: repo, auth: authenticator, logger: logger}
+	return &Server{repo: repo, adminAuth: adminAuth, gatewayAuth: gatewayAuth, logger: logger}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -41,8 +42,11 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("PATCH /v1/apps/{app_id}", s.requireAuth(http.HandlerFunc(s.patchApp)))
 	mux.Handle("GET /v1/apps/{app_id}/policies", s.requireAuth(http.HandlerFunc(s.listPolicies)))
 	mux.Handle("POST /v1/apps/{app_id}/policies", s.requireAuth(http.HandlerFunc(s.createPolicy)))
+	mux.Handle("GET /v1/apps/{app_id}/active-policy", s.requireAuth(http.HandlerFunc(s.getActivePolicy)))
 	mux.Handle("GET /v1/policies/{policy_id}", s.requireAuth(http.HandlerFunc(s.getPolicy)))
+	mux.Handle("PATCH /v1/policies/{policy_id}", s.requireAuth(http.HandlerFunc(s.patchPolicy)))
 	mux.Handle("POST /v1/policies/{policy_id}/publish", s.requireAuth(http.HandlerFunc(s.publishPolicy)))
+	mux.Handle("GET /v1/gateway/apps/{hostname}/policy", s.requireGatewayAuth(http.HandlerFunc(s.getGatewayPolicy)))
 	mux.Handle("GET /v1/events", s.requireAuth(http.HandlerFunc(s.listEvents)))
 	mux.Handle("GET /v1/events/{event_id}", s.requireAuth(http.HandlerFunc(s.getEvent)))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -200,13 +204,62 @@ func (s *Server) getPolicy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, policy)
 }
 
+func (s *Server) patchPolicy(w http.ResponseWriter, r *http.Request) {
+	var req models.UpdatePolicyRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if !s.validateUpdatePolicy(w, r, &req) {
+		return
+	}
+	policy, err := s.repo.UpdatePolicy(r.Context(), r.PathValue("policy_id"), req)
+	if err != nil {
+		s.handleReadError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, policy)
+}
+
 func (s *Server) publishPolicy(w http.ResponseWriter, r *http.Request) {
-	published, err := s.repo.PublishPolicy(r.Context(), r.PathValue("policy_id"))
+	policyID := r.PathValue("policy_id")
+	policy, err := s.repo.GetPolicy(r.Context(), policyID)
+	if err != nil {
+		s.handleReadError(w, r, err)
+		return
+	}
+	if err := validatePolicySnapshot(policy.Snapshot); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_policy", err.Error())
+		return
+	}
+	published, err := s.repo.PublishPolicy(r.Context(), policyID)
 	if err != nil {
 		s.handleReadError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, published)
+}
+
+func (s *Server) getActivePolicy(w http.ResponseWriter, r *http.Request) {
+	policy, err := s.repo.GetActivePolicyByApp(r.Context(), r.PathValue("app_id"))
+	if err != nil {
+		s.handleReadError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, policy)
+}
+
+func (s *Server) getGatewayPolicy(w http.ResponseWriter, r *http.Request) {
+	hostname := strings.TrimSpace(strings.ToLower(r.PathValue("hostname")))
+	if hostname == "" {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "hostname is required")
+		return
+	}
+	policy, err := s.repo.GetGatewayPolicyByHostname(r.Context(), hostname)
+	if err != nil {
+		s.handleReadError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, policy)
 }
 
 func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
@@ -306,9 +359,18 @@ func validatePolicySnapshot(snapshot json.RawMessage) error {
 		return err
 	}
 	var decoded struct {
-		Mode     string              `json:"mode"`
-		Rules    []map[string]string `json:"rules"`
-		IPBlocks []string            `json:"ip_blocklist"`
+		Mode        string              `json:"mode"`
+		Rules       []map[string]string `json:"rules"`
+		IPBlocks    []string            `json:"ip_blocklist"`
+		IPSets      map[string][]string `json:"ip_sets"`
+		CustomRules []struct {
+			Action string `json:"action"`
+		} `json:"custom_rules"`
+		RateLimits []struct {
+			Action        string `json:"action"`
+			Limit         int    `json:"limit"`
+			WindowSeconds int    `json:"window_seconds"`
+		} `json:"rate_limits"`
 	}
 	if err := json.Unmarshal(snapshot, &decoded); err != nil {
 		return err
@@ -323,6 +385,13 @@ func validatePolicySnapshot(snapshot json.RawMessage) error {
 			return err
 		}
 	}
+	for _, cidrs := range decoded.IPSets {
+		for _, cidr := range cidrs {
+			if err := validateCIDR(cidr); err != nil {
+				return err
+			}
+		}
+	}
 	for _, rule := range decoded.Rules {
 		if action := rule["action"]; action != "" {
 			if err := validateAction(action); err != nil {
@@ -330,13 +399,65 @@ func validatePolicySnapshot(snapshot json.RawMessage) error {
 			}
 		}
 	}
+	for _, rule := range decoded.CustomRules {
+		if rule.Action != "" {
+			if err := validateAction(rule.Action); err != nil {
+				return err
+			}
+		}
+	}
+	for _, rule := range decoded.RateLimits {
+		if rule.Action != "" {
+			if err := validateAction(rule.Action); err != nil {
+				return err
+			}
+		}
+		if rule.Limit <= 0 || rule.WindowSeconds <= 0 {
+			return errors.New("rate limit values must be positive")
+		}
+	}
 	return nil
+}
+
+func (s *Server) validateUpdatePolicy(w http.ResponseWriter, r *http.Request, req *models.UpdatePolicyRequest) bool {
+	if req.ExpectedUpdatedAt.IsZero() {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "expected_updated_at is required for optimistic locking")
+		return false
+	}
+	if req.Name != nil {
+		*req.Name = strings.TrimSpace(*req.Name)
+		if *req.Name == "" {
+			writeError(w, r, http.StatusBadRequest, "invalid_request", "name cannot be empty")
+			return false
+		}
+	}
+	if req.Mode != nil {
+		if err := validateMode(*req.Mode); err != nil {
+			writeError(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+			return false
+		}
+	}
+	if err := validatePolicySnapshot(req.Snapshot); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+		return false
+	}
+	return true
 }
 
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.auth.Authorized(r) {
+		if !s.adminAuth.Authorized(r) {
 			writeError(w, r, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) requireGatewayAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.gatewayAuth.Authorized(r) {
+			writeError(w, r, http.StatusUnauthorized, "unauthorized", "missing or invalid gateway bearer token")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -346,6 +467,10 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 func (s *Server) handleReadError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, db.ErrNotFound) {
 		writeError(w, r, http.StatusNotFound, "not_found", "resource not found")
+		return
+	}
+	if errors.Is(err, db.ErrConflict) {
+		writeError(w, r, http.StatusConflict, "conflict", "resource was modified; refresh and retry")
 		return
 	}
 	s.internalError(w, r, err)

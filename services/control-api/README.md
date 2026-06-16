@@ -22,9 +22,11 @@ Environment variables:
 export BEDEMWAF_CONTROL_API_ADDR=":8081"
 export BEDEMWAF_DATABASE_URL="postgres://bedemwaf:bedemwaf_dev_password@localhost:5432/bedemwaf?sslmode=disable"
 export BEDEMWAF_ADMIN_API_KEY="local-dev-admin-key-change-me"
+export BEDEMWAF_GATEWAY_API_KEY="local-dev-gateway-key-change-me"
 ```
 
-`BEDEMWAF_ADMIN_API_KEY` is required. Do not commit real production tokens.
+`BEDEMWAF_ADMIN_API_KEY` protects administrative routes. `BEDEMWAF_GATEWAY_API_KEY`
+protects gateway policy fetch routes. Do not commit real production tokens.
 
 ## Run
 
@@ -39,6 +41,7 @@ From the repository root with local infrastructure:
 ```bash
 ./scripts/dev-up.sh
 BEDEMWAF_ADMIN_API_KEY="local-dev-admin-key-change-me" \
+BEDEMWAF_GATEWAY_API_KEY="local-dev-gateway-key-change-me" \
 BEDEMWAF_DATABASE_URL="postgres://bedemwaf:bedemwaf_dev_password@localhost:5432/bedemwaf?sslmode=disable" \
 go run ./services/control-api/cmd/control-api
 ```
@@ -65,16 +68,18 @@ Set a shell helper:
 ```bash
 API=http://localhost:8081
 TOKEN=local-dev-admin-key-change-me
+GATEWAY_TOKEN=local-dev-gateway-key-change-me
 AUTH="Authorization: Bearer $TOKEN"
+GATEWAY_AUTH="Authorization: Bearer $GATEWAY_TOKEN"
 ```
 
 Create a tenant:
 
 ```bash
-curl -s -X POST "$API/v1/tenants" \
+TENANT_ID=$(curl -s -X POST "$API/v1/tenants" \
   -H "$AUTH" \
   -H "Content-Type: application/json" \
-  -d '{"name":"Demo Tenant","slug":"demo"}'
+  -d '{"name":"Demo Tenant","slug":"demo"}' | jq -r .id)
 ```
 
 List tenants:
@@ -86,22 +91,22 @@ curl -s "$API/v1/tenants" -H "$AUTH"
 Create an app and primary origin:
 
 ```bash
-curl -s -X POST "$API/v1/apps" \
+APP_ID=$(curl -s -X POST "$API/v1/apps" \
   -H "$AUTH" \
   -H "Content-Type: application/json" \
   -d '{
-    "tenant_id":"00000000-0000-0000-0000-000000000000",
+    "tenant_id":"'"$TENANT_ID"'",
     "name":"Demo App",
     "slug":"demo-app",
     "hostnames":["app.example.local"],
     "origin_url":"http://localhost:9000"
-  }'
+  }' | jq -r .id)
 ```
 
 Create a policy draft:
 
 ```bash
-curl -s -X POST "$API/v1/apps/<app_id>/policies" \
+POLICY_ID=$(curl -s -X POST "$API/v1/apps/$APP_ID/policies" \
   -H "$AUTH" \
   -H "Content-Type: application/json" \
   -d '{
@@ -109,16 +114,63 @@ curl -s -X POST "$API/v1/apps/<app_id>/policies" \
     "mode":"count",
     "snapshot":{
       "mode":"count",
-      "ip_blocklist":["203.0.113.10/32"],
-      "rules":[{"id":"rule-login","action":"count"}]
+      "ip_sets":{"office_ips":["198.51.100.0/24"]},
+      "custom_rules":[{
+        "id":"rule-admin-office-only",
+        "name":"Admin only from office IPs",
+        "priority":100,
+        "enabled":true,
+        "action":"block",
+        "status_code":403,
+        "when":{"path_starts_with":"/admin"}
+      }],
+      "rate_limits":[{
+        "id":"rl-login",
+        "name":"Login IP limit",
+        "enabled":true,
+        "priority":100,
+        "key_type":"ip",
+        "limit":20,
+        "window_seconds":60,
+        "action":"block",
+        "status_code":429
+      }],
+      "waf":{"enabled":true,"engine":"coraza","rule_engine":"DetectionOnly"}
     }
+  }' | jq -r .id)
+```
+
+Update a policy draft with optimistic locking:
+
+```bash
+UPDATED_AT=$(curl -s "$API/v1/policies/$POLICY_ID" -H "$AUTH" | jq -r .updated_at)
+curl -s -X PATCH "$API/v1/policies/$POLICY_ID" \
+  -H "$AUTH" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "expected_updated_at":"'"$UPDATED_AT"'",
+    "mode":"block",
+    "snapshot":{"mode":"block","waf":{"enabled":true,"engine":"coraza"}}
   }'
 ```
 
-Publish a policy:
+Publish a policy to create an immutable version and advance the active
+deployment pointer:
 
 ```bash
-curl -s -X POST "$API/v1/policies/<policy_id>/publish" -H "$AUTH"
+curl -s -X POST "$API/v1/policies/$POLICY_ID/publish" -H "$AUTH"
+```
+
+Fetch the active compiled policy as an admin:
+
+```bash
+curl -s "$API/v1/apps/$APP_ID/active-policy" -H "$AUTH"
+```
+
+Fetch the gateway-ready policy by hostname using the gateway key:
+
+```bash
+curl -s "$API/v1/gateway/apps/app.example.local/policy" -H "$GATEWAY_AUTH"
 ```
 
 Search event references:
@@ -144,9 +196,12 @@ All API errors use:
 
 ## MVP Notes
 
-- Authentication is a single static admin API key.
+- Authentication uses static API keys for MVP: one admin key and one separate
+  gateway key.
 - Policy snapshots are stored as JSON in policy metadata until publish creates an
   immutable `policy_versions` row.
+- Publishing compiles gateway-ready JSON and atomically advances the active
+  deployment pointer in `policy_deployments`.
 - Event endpoints read `audit_event_refs`; full ClickHouse event search is later
   phase work.
 - The API validates hostnames, origin URLs, modes, rule actions in policy

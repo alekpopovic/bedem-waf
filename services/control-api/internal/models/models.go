@@ -79,11 +79,33 @@ type CreatePolicyRequest struct {
 	Snapshot json.RawMessage `json:"snapshot"`
 }
 
+type UpdatePolicyRequest struct {
+	Name              *string         `json:"name,omitempty"`
+	Mode              *string         `json:"mode,omitempty"`
+	Enabled           *bool           `json:"enabled,omitempty"`
+	Snapshot          json.RawMessage `json:"snapshot,omitempty"`
+	ExpectedUpdatedAt time.Time       `json:"expected_updated_at"`
+}
+
 type PublishPolicyResponse struct {
 	PolicyID        string    `json:"policy_id"`
 	PolicyVersionID string    `json:"policy_version_id"`
 	Version         int       `json:"version"`
 	PublishedAt     time.Time `json:"published_at"`
+}
+
+type GatewayPolicy struct {
+	TenantID        string          `json:"tenant_id"`
+	AppID           string          `json:"app_id"`
+	PolicyID        string          `json:"policy_id"`
+	PolicyVersionID string          `json:"policy_version_id"`
+	Mode            string          `json:"mode"`
+	Origin          Origin          `json:"origin"`
+	IPSets          json.RawMessage `json:"ip_sets"`
+	CustomRules     json.RawMessage `json:"custom_rules"`
+	RateLimits      json.RawMessage `json:"rate_limits"`
+	WAF             json.RawMessage `json:"waf"`
+	PublishedAt     time.Time       `json:"published_at"`
 }
 
 type EventRef struct {

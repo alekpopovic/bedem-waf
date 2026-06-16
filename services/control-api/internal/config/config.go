@@ -6,9 +6,10 @@ import (
 )
 
 type Config struct {
-	ListenAddr  string
-	DatabaseURL string
-	AdminAPIKey string
+	ListenAddr    string
+	DatabaseURL   string
+	AdminAPIKey   string
+	GatewayAPIKey string
 
 	DBPingTimeout time.Duration
 }
@@ -18,6 +19,7 @@ func Load() Config {
 		ListenAddr:    getenv("BEDEMWAF_CONTROL_API_ADDR", ":8081"),
 		DatabaseURL:   os.Getenv("BEDEMWAF_DATABASE_URL"),
 		AdminAPIKey:   os.Getenv("BEDEMWAF_ADMIN_API_KEY"),
+		GatewayAPIKey: os.Getenv("BEDEMWAF_GATEWAY_API_KEY"),
 		DBPingTimeout: 2 * time.Second,
 	}
 	if cfg.DatabaseURL == "" {

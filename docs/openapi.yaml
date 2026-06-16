@@ -108,6 +108,16 @@ paths:
       responses:
         "201":
           description: Policy created
+  /v1/apps/{app_id}/active-policy:
+    get:
+      summary: Get active compiled policy for an app
+      parameters:
+        - $ref: "#/components/parameters/AppID"
+      responses:
+        "200":
+          description: Gateway-ready policy JSON
+        "404":
+          $ref: "#/components/responses/Error"
   /v1/policies/{policy_id}:
     get:
       summary: Get policy
@@ -118,6 +128,21 @@ paths:
           description: Policy
         "404":
           $ref: "#/components/responses/Error"
+    patch:
+      summary: Update mutable policy draft with optimistic locking
+      parameters:
+        - $ref: "#/components/parameters/PolicyID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePolicyRequest"
+      responses:
+        "200":
+          description: Policy draft updated
+        "409":
+          $ref: "#/components/responses/Error"
   /v1/policies/{policy_id}/publish:
     post:
       summary: Publish policy draft to immutable policy version
@@ -126,6 +151,28 @@ paths:
       responses:
         "201":
           description: Policy version published
+  /v1/gateway/apps/{hostname}/policy:
+    get:
+      summary: Get active gateway policy by hostname
+      security:
+        - GatewayBearerAuth: []
+      parameters:
+        - name: hostname
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Gateway-ready policy JSON
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GatewayPolicy"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
   /v1/events:
     get:
       summary: List audit event references
@@ -160,6 +207,10 @@ components:
       type: http
       scheme: bearer
       description: Static MVP admin token from BEDEMWAF_ADMIN_API_KEY.
+    GatewayBearerAuth:
+      type: http
+      scheme: bearer
+      description: Static MVP gateway token from BEDEMWAF_GATEWAY_API_KEY.
   parameters:
     AppID:
       name: app_id
@@ -260,3 +311,55 @@ components:
         snapshot:
           type: object
           description: MVP policy JSON snapshot. Actions may be allow, count, block, or rate_limit.
+    UpdatePolicyRequest:
+      type: object
+      required: [expected_updated_at]
+      properties:
+        name:
+          type: string
+        mode:
+          type: string
+          enum: [count, block]
+        enabled:
+          type: boolean
+        expected_updated_at:
+          type: string
+          format: date-time
+          description: Last observed policy updated_at value.
+        snapshot:
+          type: object
+    GatewayPolicy:
+      type: object
+      required:
+        - tenant_id
+        - app_id
+        - policy_id
+        - policy_version_id
+        - mode
+        - origin
+        - ip_sets
+        - custom_rules
+        - rate_limits
+        - waf
+      properties:
+        tenant_id:
+          type: string
+        app_id:
+          type: string
+        policy_id:
+          type: string
+        policy_version_id:
+          type: string
+        mode:
+          type: string
+          enum: [count, block]
+        origin:
+          type: object
+        ip_sets:
+          type: object
+        custom_rules:
+          type: array
+        rate_limits:
+          type: array
+        waf:
+          type: object

@@ -37,6 +37,10 @@ func main() {
 		logger.Error("admin_api_key_required", "env", "BEDEMWAF_ADMIN_API_KEY")
 		os.Exit(1)
 	}
+	if cfg.GatewayAPIKey == "" {
+		logger.Error("gateway_api_key_required", "env", "BEDEMWAF_GATEWAY_API_KEY")
+		os.Exit(1)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.DBPingTimeout)
 	defer cancel()
@@ -48,7 +52,7 @@ func main() {
 	repo := db.NewPostgresRepository(pool)
 	defer repo.Close()
 
-	api := httpapi.NewServer(repo, auth.NewStaticBearer(cfg.AdminAPIKey), logger)
+	api := httpapi.NewServer(repo, auth.NewStaticBearer(cfg.AdminAPIKey), auth.NewStaticBearer(cfg.GatewayAPIKey), logger)
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           api.Routes(),

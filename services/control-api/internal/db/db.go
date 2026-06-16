@@ -2,8 +2,10 @@ package db
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
-	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -16,6 +18,7 @@ import (
 )
 
 var ErrNotFound = errors.New("not found")
+var ErrConflict = errors.New("conflict")
 
 type Repository interface {
 	Ping(context.Context) error
@@ -28,7 +31,10 @@ type Repository interface {
 	ListPoliciesByApp(context.Context, string) ([]models.Policy, error)
 	CreatePolicy(context.Context, string, models.CreatePolicyRequest) (models.Policy, error)
 	GetPolicy(context.Context, string) (models.Policy, error)
+	UpdatePolicy(context.Context, string, models.UpdatePolicyRequest) (models.Policy, error)
 	PublishPolicy(context.Context, string) (models.PublishPolicyResponse, error)
+	GetActivePolicyByApp(context.Context, string) (models.GatewayPolicy, error)
+	GetGatewayPolicyByHostname(context.Context, string) (models.GatewayPolicy, error)
 	ListEvents(context.Context, int) ([]models.EventRef, error)
 	GetEvent(context.Context, string) (models.EventRef, error)
 	Close()
@@ -272,7 +278,10 @@ func (r *PostgresRepository) CreatePolicy(ctx context.Context, appID string, req
 	if len(snapshot) == 0 {
 		snapshot = []byte(`{}`)
 	}
-	metadata := []byte(fmt.Sprintf(`{"snapshot":%s}`, snapshot))
+	metadata, err := metadataWithSnapshot(nil, snapshot)
+	if err != nil {
+		return models.Policy{}, err
+	}
 	var policy models.Policy
 	err = r.pool.QueryRow(ctx, `
 		INSERT INTO policies (tenant_id, app_id, name, mode, metadata)
@@ -289,16 +298,69 @@ func (r *PostgresRepository) GetPolicy(ctx context.Context, id string) (models.P
 	var policy models.Policy
 	err := r.pool.QueryRow(ctx, `
 		SELECT p.id::text, p.tenant_id::text, p.app_id::text, p.name, p.mode, p.enabled,
-		       COALESCE(p.active_version_id::text, ''), COALESCE(v.snapshot, '{}'::jsonb),
+		       COALESCE(p.active_version_id::text, ''), COALESCE(p.metadata->'snapshot', '{}'::jsonb),
 		       p.created_at, p.updated_at
 		FROM policies p
-		LEFT JOIN policy_versions v ON v.id = p.active_version_id
 		WHERE p.id = $1 AND p.deleted_at IS NULL`, id,
 	).Scan(&policy.ID, &policy.TenantID, &policy.AppID, &policy.Name, &policy.Mode, &policy.Enabled, &policy.ActiveVersionID, &policy.Snapshot, &policy.CreatedAt, &policy.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.Policy{}, ErrNotFound
 	}
 	return policy, err
+}
+
+func (r *PostgresRepository) UpdatePolicy(ctx context.Context, id string, req models.UpdatePolicyRequest) (models.Policy, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return models.Policy{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	current, err := getPolicyForUpdate(ctx, tx, id)
+	if err != nil {
+		return models.Policy{}, err
+	}
+	if !current.UpdatedAt.Equal(req.ExpectedUpdatedAt) {
+		return models.Policy{}, ErrConflict
+	}
+	if req.Name != nil {
+		current.Name = *req.Name
+	}
+	if req.Mode != nil {
+		current.Mode = *req.Mode
+	}
+	if req.Enabled != nil {
+		current.Enabled = *req.Enabled
+	}
+	if len(req.Snapshot) > 0 {
+		current.Snapshot = req.Snapshot
+	}
+	metadata, err := metadataWithSnapshot(nil, current.Snapshot)
+	if err != nil {
+		return models.Policy{}, err
+	}
+	var updated models.Policy
+	err = tx.QueryRow(ctx, `
+		UPDATE policies
+		SET name = $2, mode = $3, enabled = $4, metadata = $5, updated_at = now()
+		WHERE id = $1 AND deleted_at IS NULL
+		RETURNING id::text, tenant_id::text, app_id::text, name, mode, enabled,
+		          COALESCE(active_version_id::text, ''), COALESCE(metadata->'snapshot', '{}'::jsonb),
+		          created_at, updated_at`,
+		id, current.Name, current.Mode, current.Enabled, metadata,
+	).Scan(&updated.ID, &updated.TenantID, &updated.AppID, &updated.Name, &updated.Mode, &updated.Enabled, &updated.ActiveVersionID, &updated.Snapshot, &updated.CreatedAt, &updated.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.Policy{}, ErrNotFound
+	}
+	if err != nil {
+		return models.Policy{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return models.Policy{}, err
+	}
+	return updated, nil
 }
 
 func (r *PostgresRepository) PublishPolicy(ctx context.Context, id string) (models.PublishPolicyResponse, error) {
@@ -318,17 +380,26 @@ func (r *PostgresRepository) PublishPolicy(ctx context.Context, id string) (mode
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) + 1 FROM policy_versions WHERE policy_id = $1`, id).Scan(&version); err != nil {
 		return models.PublishPolicyResponse{}, err
 	}
-	snapshot := policy.Snapshot
-	if len(snapshot) == 0 {
-		snapshot = []byte(fmt.Sprintf(`{"policy_id":%q,"mode":%q}`, policy.ID, policy.Mode))
-	}
 	var versionID string
 	var publishedAt time.Time
+	if err := tx.QueryRow(ctx, `SELECT gen_random_uuid()::text, now()`).Scan(&versionID, &publishedAt); err != nil {
+		return models.PublishPolicyResponse{}, err
+	}
+	compiled, err := compileGatewayPolicy(ctx, tx, policy, versionID)
+	if err != nil {
+		return models.PublishPolicyResponse{}, err
+	}
+	compiled.PublishedAt = publishedAt
+	snapshot, err := json.Marshal(compiled)
+	if err != nil {
+		return models.PublishPolicyResponse{}, err
+	}
+	sum := sha256.Sum256(snapshot)
 	err = tx.QueryRow(ctx, `
-		INSERT INTO policy_versions (tenant_id, app_id, policy_id, version, mode, snapshot)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO policy_versions (id, tenant_id, app_id, policy_id, version, mode, snapshot, snapshot_sha256, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id::text, created_at`,
-		policy.TenantID, policy.AppID, policy.ID, version, policy.Mode, snapshot,
+		versionID, policy.TenantID, policy.AppID, policy.ID, version, policy.Mode, snapshot, hex.EncodeToString(sum[:]), publishedAt,
 	).Scan(&versionID, &publishedAt)
 	if err != nil {
 		return models.PublishPolicyResponse{}, err
@@ -336,10 +407,75 @@ func (r *PostgresRepository) PublishPolicy(ctx context.Context, id string) (mode
 	if _, err := tx.Exec(ctx, `UPDATE policies SET active_version_id = $2, updated_at = now() WHERE id = $1`, policy.ID, versionID); err != nil {
 		return models.PublishPolicyResponse{}, err
 	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO policy_deployments (tenant_id, app_id, policy_id, policy_version_id, gateway_node_id, status, deployed_at, last_seen_at)
+		VALUES ($1, $2, $3, $4, 'default', 'active', now(), now())
+		ON CONFLICT (policy_id, gateway_node_id)
+		DO UPDATE SET policy_version_id = EXCLUDED.policy_version_id,
+		              status = 'active',
+		              deployed_at = now(),
+		              updated_at = now()`,
+		policy.TenantID, policy.AppID, policy.ID, versionID); err != nil {
+		return models.PublishPolicyResponse{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return models.PublishPolicyResponse{}, err
 	}
 	return models.PublishPolicyResponse{PolicyID: policy.ID, PolicyVersionID: versionID, Version: version, PublishedAt: publishedAt}, nil
+}
+
+func (r *PostgresRepository) GetActivePolicyByApp(ctx context.Context, appID string) (models.GatewayPolicy, error) {
+	var snapshot []byte
+	err := r.pool.QueryRow(ctx, `
+		SELECT v.snapshot
+		FROM policy_deployments d
+		JOIN policies p ON p.id = d.policy_id
+		JOIN policy_versions v ON v.id = d.policy_version_id
+		WHERE d.app_id = $1
+		  AND d.gateway_node_id = 'default'
+		  AND d.status = 'active'
+		  AND p.deleted_at IS NULL
+		  AND p.enabled = true
+		ORDER BY d.deployed_at DESC
+		LIMIT 1`, appID,
+	).Scan(&snapshot)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.GatewayPolicy{}, ErrNotFound
+	}
+	if err != nil {
+		return models.GatewayPolicy{}, err
+	}
+	return decodeGatewayPolicy(snapshot)
+}
+
+func (r *PostgresRepository) GetGatewayPolicyByHostname(ctx context.Context, hostname string) (models.GatewayPolicy, error) {
+	var snapshot []byte
+	err := r.pool.QueryRow(ctx, `
+		SELECT v.snapshot
+		FROM apps a
+		JOIN policy_deployments d ON d.app_id = a.id
+		JOIN policies p ON p.id = d.policy_id
+		JOIN policy_versions v ON v.id = d.policy_version_id
+		WHERE EXISTS (
+			SELECT 1 FROM unnest(a.hostnames) AS hostname
+			WHERE lower(hostname) = lower($1)
+		)
+		  AND d.gateway_node_id = 'default'
+		  AND d.status = 'active'
+		  AND a.deleted_at IS NULL
+		  AND a.status = 'active'
+		  AND p.deleted_at IS NULL
+		  AND p.enabled = true
+		ORDER BY d.deployed_at DESC
+		LIMIT 1`, hostname,
+	).Scan(&snapshot)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.GatewayPolicy{}, ErrNotFound
+	}
+	if err != nil {
+		return models.GatewayPolicy{}, err
+	}
+	return decodeGatewayPolicy(snapshot)
 }
 
 func (r *PostgresRepository) ListEvents(ctx context.Context, limit int) ([]models.EventRef, error) {
@@ -446,4 +582,97 @@ func getPolicyForUpdate(ctx context.Context, tx pgx.Tx, id string) (models.Polic
 		return models.Policy{}, ErrNotFound
 	}
 	return policy, err
+}
+
+func compileGatewayPolicy(ctx context.Context, tx pgx.Tx, policy models.Policy, versionID string) (models.GatewayPolicy, error) {
+	origin, err := getPrimaryOrigin(ctx, tx, policy.AppID)
+	if err != nil {
+		return models.GatewayPolicy{}, err
+	}
+	draft, err := decodeDraft(policy.Snapshot)
+	if err != nil {
+		return models.GatewayPolicy{}, err
+	}
+	mode := policy.Mode
+	if draft.Mode != "" {
+		mode = draft.Mode
+	}
+	return models.GatewayPolicy{
+		TenantID:        policy.TenantID,
+		AppID:           policy.AppID,
+		PolicyID:        policy.ID,
+		PolicyVersionID: versionID,
+		Mode:            mode,
+		Origin:          origin,
+		IPSets:          defaultRaw(draft.IPSets, `{}`),
+		CustomRules:     defaultRaw(draft.CustomRules, `[]`),
+		RateLimits:      defaultRaw(draft.RateLimits, `[]`),
+		WAF:             defaultRaw(draft.WAF, `{}`),
+	}, nil
+}
+
+func getPrimaryOrigin(ctx context.Context, tx pgx.Tx, appID string) (models.Origin, error) {
+	var origin models.Origin
+	err := tx.QueryRow(ctx, `
+		SELECT id::text, name, scheme, host, port
+		FROM origins
+		WHERE app_id = $1 AND deleted_at IS NULL AND enabled = true
+		ORDER BY name = 'primary' DESC, created_at
+		LIMIT 1`, appID,
+	).Scan(&origin.ID, &origin.Name, &origin.Scheme, &origin.Host, &origin.Port)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.Origin{}, ErrNotFound
+	}
+	if err != nil {
+		return models.Origin{}, err
+	}
+	origin.URL = origin.Scheme + "://" + origin.Host + ":" + strconv.Itoa(origin.Port)
+	return origin, nil
+}
+
+type policyDraft struct {
+	Mode        string          `json:"mode"`
+	IPSets      json.RawMessage `json:"ip_sets"`
+	CustomRules json.RawMessage `json:"custom_rules"`
+	RateLimits  json.RawMessage `json:"rate_limits"`
+	WAF         json.RawMessage `json:"waf"`
+}
+
+func decodeDraft(snapshot json.RawMessage) (policyDraft, error) {
+	if len(snapshot) == 0 {
+		return policyDraft{}, nil
+	}
+	var draft policyDraft
+	if err := json.Unmarshal(snapshot, &draft); err != nil {
+		return policyDraft{}, err
+	}
+	return draft, nil
+}
+
+func metadataWithSnapshot(existing json.RawMessage, snapshot json.RawMessage) ([]byte, error) {
+	var metadata map[string]json.RawMessage
+	if len(existing) > 0 {
+		if err := json.Unmarshal(existing, &metadata); err != nil {
+			return nil, err
+		}
+	} else {
+		metadata = make(map[string]json.RawMessage)
+	}
+	metadata["snapshot"] = defaultRaw(snapshot, `{}`)
+	return json.Marshal(metadata)
+}
+
+func decodeGatewayPolicy(snapshot []byte) (models.GatewayPolicy, error) {
+	var policy models.GatewayPolicy
+	if err := json.Unmarshal(snapshot, &policy); err != nil {
+		return models.GatewayPolicy{}, err
+	}
+	return policy, nil
+}
+
+func defaultRaw(value json.RawMessage, fallback string) json.RawMessage {
+	if len(value) == 0 || string(value) == "null" {
+		return json.RawMessage(fallback)
+	}
+	return value
 }

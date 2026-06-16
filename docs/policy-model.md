@@ -287,6 +287,86 @@ Custom rules
 Apply count/block mode
 ```
 
+## Published Gateway Policy JSON
+
+Control API policy drafts are mutable. Publishing validates the draft, compiles
+it with the app origin, writes an immutable `policy_versions.snapshot`, and
+atomically advances the active pointer in `policy_deployments`.
+
+The gateway policy endpoint:
+
+```text
+GET /v1/gateway/apps/{hostname}/policy
+Authorization: Bearer <BEDEMWAF_GATEWAY_API_KEY>
+```
+
+returns JSON shaped for gateway consumption:
+
+```json
+{
+  "tenant_id": "7d6c9c9c-5d8f-4b1e-8b6c-2b7c4b6c7f01",
+  "app_id": "9a6c4f2e-7c4a-4f52-93a5-3148a6f9e011",
+  "policy_id": "e06edfe2-4dc6-46c8-b66d-1e2e962c2b7e",
+  "policy_version_id": "b7e5c513-43cc-4c69-b6db-4f30ad23f328",
+  "mode": "count",
+  "origin": {
+    "id": "1fd8fc48-7b4e-45cc-81ca-d8c0fd234e71",
+    "name": "primary",
+    "scheme": "http",
+    "host": "nginx-origin",
+    "port": 9000,
+    "url": "http://nginx-origin:9000"
+  },
+  "ip_sets": {
+    "office_ips": ["198.51.100.0/24"],
+    "blocked_sources": ["203.0.113.10/32"]
+  },
+  "custom_rules": [
+    {
+      "id": "rule-admin-office-only",
+      "name": "Admin only from office IPs",
+      "priority": 100,
+      "enabled": true,
+      "action": "block",
+      "status_code": 403,
+      "when": {
+        "all": [
+          {"path_starts_with": "/admin"},
+          {"client_ip_not_in_ip_set": "office_ips"}
+        ]
+      }
+    }
+  ],
+  "rate_limits": [
+    {
+      "id": "rl-login-ip",
+      "name": "Login IP limit",
+      "enabled": true,
+      "priority": 100,
+      "match": {"path_starts_with": "/login"},
+      "key_type": "ip",
+      "limit": 20,
+      "window_seconds": 60,
+      "action": "block",
+      "status_code": 429
+    }
+  ],
+  "waf": {
+    "enabled": true,
+    "engine": "coraza",
+    "rule_engine": "DetectionOnly",
+    "request_body_limit_bytes": 1048576,
+    "directives_file": "./rules/coraza.conf"
+  },
+  "published_at": "2026-06-16T12:00:00Z"
+}
+```
+
+Gateway implementations should treat this response as read-only runtime
+configuration and cache it with a short TTL. If the policy endpoint is
+unavailable, gateways should continue using the last known good policy and emit
+an audit or health warning.
+
 ## MVP vs Later Phase
 
 MVP:
