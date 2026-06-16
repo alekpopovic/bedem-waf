@@ -2,78 +2,180 @@ openapi: 3.1.0
 info:
   title: BedemWAF Control API
   version: 0.1.0
-  description: REST management API for BedemWAF tenants, apps, policies, and audit event references.
+  description: |
+    REST management API for BedemWAF tenants, applications, origins, policy
+    drafts, policy publishing, gateway policy retrieval, and WAF audit event
+    search.
+
+    MVP authentication uses static bearer tokens. Administrative `/v1` routes
+    use `AdminBearerAuth`; gateway policy retrieval uses `GatewayBearerAuth`.
 servers:
   - url: http://localhost:8081
+    description: Local development Control API
+tags:
+  - name: Health
+  - name: Tenants
+  - name: Apps
+  - name: Policies
+  - name: Gateway
+  - name: Events
 security:
   - AdminBearerAuth: []
+
 paths:
   /healthz:
     get:
+      tags: [Health]
       summary: Liveness check
       security: []
       responses:
         "200":
           description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
   /readyz:
     get:
+      tags: [Health]
       summary: Readiness check
       security: []
       responses:
         "200":
-          description: Database is reachable
+          description: Required dependencies are reachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
         "503":
           $ref: "#/components/responses/Error"
+
   /v1/tenants:
     get:
+      tags: [Tenants]
       summary: List tenants
+      security:
+        - AdminBearerAuth: []
       responses:
         "200":
           description: Tenant list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tenants]
+                properties:
+                  tenants:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Tenant"
+        "401":
+          $ref: "#/components/responses/Error"
     post:
+      tags: [Tenants]
       summary: Create tenant
+      security:
+        - AdminBearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: "#/components/schemas/CreateTenantRequest"
+            examples:
+              demo:
+                value:
+                  name: Demo Tenant
+                  slug: demo
       responses:
         "201":
           description: Tenant created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
         "400":
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+
   /v1/apps:
     get:
+      tags: [Apps]
       summary: List apps
+      security:
+        - AdminBearerAuth: []
       responses:
         "200":
-          description: App list
+          description: Application list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [apps]
+                properties:
+                  apps:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/App"
+        "401":
+          $ref: "#/components/responses/Error"
     post:
+      tags: [Apps]
       summary: Create app with primary origin
+      security:
+        - AdminBearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: "#/components/schemas/CreateAppRequest"
+            examples:
+              demo:
+                value:
+                  tenant_id: tenant-1
+                  name: Demo App
+                  slug: demo-app
+                  hostnames: [app.example.local]
+                  origin_url: http://localhost:9000
       responses:
         "201":
-          description: App created
+          description: Application created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/App"
         "400":
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+
   /v1/apps/{app_id}:
     get:
+      tags: [Apps]
       summary: Get app
+      security:
+        - AdminBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/AppID"
       responses:
         "200":
-          description: App
+          description: Application
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/App"
+        "401":
+          $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
     patch:
+      tags: [Apps]
       summary: Update app
+      security:
+        - AdminBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/AppID"
       requestBody:
@@ -84,19 +186,48 @@ paths:
               $ref: "#/components/schemas/UpdateAppRequest"
       responses:
         "200":
-          description: App updated
+          description: Application updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/App"
         "400":
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+
   /v1/apps/{app_id}/policies:
     get:
+      tags: [Policies]
       summary: List policies for app
+      security:
+        - AdminBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/AppID"
       responses:
         "200":
           description: Policy list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [policies]
+                properties:
+                  policies:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Policy"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
     post:
+      tags: [Policies]
       summary: Create policy draft
+      security:
+        - AdminBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/AppID"
       requestBody:
@@ -105,31 +236,96 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/CreatePolicyRequest"
+            examples:
+              countPolicy:
+                value:
+                  name: Default policy
+                  mode: count
+                  snapshot:
+                    mode: count
+                    ip_sets:
+                      office_ips: [198.51.100.0/24]
+                    custom_rules:
+                      - id: rule-admin-office-only
+                        name: Admin only from office IPs
+                        priority: 100
+                        enabled: true
+                        action: block
+                        status_code: 403
+                        when:
+                          path_starts_with: /admin
+                    rate_limits:
+                      - id: rl-login
+                        name: Login IP limit
+                        enabled: true
+                        priority: 100
+                        key_type: ip
+                        limit: 20
+                        window_seconds: 60
+                        action: block
+                        status_code: 429
+                    waf:
+                      enabled: true
+                      engine: coraza
+                      rule_engine: DetectionOnly
       responses:
         "201":
           description: Policy created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+
   /v1/apps/{app_id}/active-policy:
     get:
-      summary: Get active compiled policy for an app
+      tags: [Policies]
+      summary: Get active gateway-ready policy for an app
+      security:
+        - AdminBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/AppID"
       responses:
         "200":
-          description: Gateway-ready policy JSON
+          description: Active gateway-ready policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GatewayPolicy"
+        "401":
+          $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+
   /v1/policies/{policy_id}:
     get:
-      summary: Get policy
+      tags: [Policies]
+      summary: Get policy draft metadata and snapshot
+      security:
+        - AdminBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/PolicyID"
       responses:
         "200":
           description: Policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "401":
+          $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
     patch:
+      tags: [Policies]
       summary: Update mutable policy draft with optimistic locking
+      security:
+        - AdminBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/PolicyID"
       requestBody:
@@ -140,28 +336,51 @@ paths:
               $ref: "#/components/schemas/UpdatePolicyRequest"
       responses:
         "200":
-          description: Policy draft updated
+          description: Policy updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
         "409":
           $ref: "#/components/responses/Error"
+
   /v1/policies/{policy_id}/publish:
     post:
-      summary: Publish policy draft to immutable policy version
+      tags: [Policies]
+      summary: Publish policy draft to an immutable version
+      security:
+        - AdminBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/PolicyID"
       responses:
         "201":
-          description: Policy version published
+          description: Policy published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishPolicyResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+
   /v1/gateway/apps/{hostname}/policy:
     get:
+      tags: [Gateway]
       summary: Get active gateway policy by hostname
+      description: Protected by the separate gateway API key.
       security:
         - GatewayBearerAuth: []
       parameters:
-        - name: hostname
-          in: path
-          required: true
-          schema:
-            type: string
+        - $ref: "#/components/parameters/Hostname"
       responses:
         "200":
           description: Gateway-ready policy JSON
@@ -169,84 +388,80 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GatewayPolicy"
+        "400":
+          $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+
   /v1/events:
     get:
+      tags: [Events]
       summary: Search WAF audit events
+      security:
+        - AdminBearerAuth: []
       parameters:
-        - name: tenant_id
-          in: query
-          schema:
-            type: string
-        - name: app_id
-          in: query
-          schema:
-            type: string
-        - name: host
-          in: query
-          schema:
-            type: string
-        - name: action
-          in: query
-          schema:
-            type: string
-        - name: client_ip
-          in: query
-          schema:
-            type: string
-        - name: matched_rule_id
-          in: query
-          schema:
-            type: string
-        - name: from
-          in: query
-          schema:
-            type: string
-            format: date-time
-        - name: to
-          in: query
-          schema:
-            type: string
-            format: date-time
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 1000
-            default: 100
+        - $ref: "#/components/parameters/TenantIDQuery"
+        - $ref: "#/components/parameters/AppIDQuery"
+        - $ref: "#/components/parameters/HostQuery"
+        - $ref: "#/components/parameters/ActionQuery"
+        - $ref: "#/components/parameters/ClientIPQuery"
+        - $ref: "#/components/parameters/MatchedRuleIDQuery"
+        - $ref: "#/components/parameters/FromQuery"
+        - $ref: "#/components/parameters/ToQuery"
+        - $ref: "#/components/parameters/LimitQuery"
       responses:
         "200":
-          description: WAF audit events
+          description: Matching audit events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditEvent"
         "400":
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+
   /v1/events/{request_id}:
     get:
+      tags: [Events]
       summary: Get WAF audit event by request ID
+      security:
+        - AdminBearerAuth: []
       parameters:
-        - name: request_id
-          in: path
-          required: true
-          schema:
-            type: string
+        - $ref: "#/components/parameters/RequestID"
       responses:
         "200":
-          description: WAF audit event
+          description: Audit event
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEvent"
+        "401":
+          $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+
 components:
   securitySchemes:
     AdminBearerAuth:
       type: http
       scheme: bearer
-      description: Static MVP admin token from BEDEMWAF_ADMIN_API_KEY.
+      bearerFormat: opaque
+      description: Static MVP admin token from `BEDEMWAF_ADMIN_API_KEY`.
     GatewayBearerAuth:
       type: http
       scheme: bearer
-      description: Static MVP gateway token from BEDEMWAF_GATEWAY_API_KEY.
+      bearerFormat: opaque
+      description: Static MVP gateway token from `BEDEMWAF_GATEWAY_API_KEY`.
+
   parameters:
     AppID:
       name: app_id
@@ -254,22 +469,99 @@ components:
       required: true
       schema:
         type: string
-        format: uuid
+      example: app-1
     PolicyID:
       name: policy_id
       in: path
       required: true
       schema:
         type: string
-        format: uuid
+      example: policy-1
+    Hostname:
+      name: hostname
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+      example: app.example.local
+    RequestID:
+      name: request_id
+      in: path
+      required: true
+      schema:
+        type: string
+      example: req-0123456789abcdef
+    TenantIDQuery:
+      name: tenant_id
+      in: query
+      schema:
+        type: string
+    AppIDQuery:
+      name: app_id
+      in: query
+      schema:
+        type: string
+    HostQuery:
+      name: host
+      in: query
+      schema:
+        type: string
+    ActionQuery:
+      name: action
+      in: query
+      schema:
+        $ref: "#/components/schemas/Action"
+    ClientIPQuery:
+      name: client_ip
+      in: query
+      schema:
+        type: string
+    MatchedRuleIDQuery:
+      name: matched_rule_id
+      in: query
+      schema:
+        type: string
+    FromQuery:
+      name: from
+      in: query
+      schema:
+        type: string
+        format: date-time
+      description: Inclusive lower timestamp bound.
+    ToQuery:
+      name: to
+      in: query
+      schema:
+        type: string
+        format: date-time
+      description: Inclusive upper timestamp bound.
+    LimitQuery:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 100
+
   responses:
     Error:
-      description: JSON error response
+      description: Consistent JSON error response
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+
   schemas:
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          examples: [ok, ready]
+
     ErrorResponse:
       type: object
       required: [error]
@@ -280,50 +572,121 @@ components:
           properties:
             code:
               type: string
+              examples: [invalid_request, unauthorized, not_found, conflict, internal_error]
             message:
               type: string
             request_id:
               type: string
-    CreateTenantRequest:
+
+    Tenant:
       type: object
-      required: [name, slug]
+      required: [id, name, slug, status, created_at, updated_at]
       properties:
+        id:
+          type: string
         name:
           type: string
         slug:
           type: string
           pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
+        status:
+          type: string
+          examples: [active]
         metadata:
           type: object
-    CreateAppRequest:
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateTenantRequest:
       type: object
-      required: [tenant_id, name, slug, hostnames, origin_url]
+      required: [name, slug]
+      additionalProperties: false
       properties:
+        name:
+          type: string
+          minLength: 1
+        slug:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
+        metadata:
+          type: object
+          additionalProperties: true
+
+    App:
+      type: object
+      required: [id, tenant_id, name, slug, hostnames, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
         tenant_id:
           type: string
-          format: uuid
         name:
           type: string
         slug:
           type: string
         hostnames:
           type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [active, disabled]
+        origins:
+          type: array
+          items:
+            $ref: "#/components/schemas/Origin"
+        metadata:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateAppRequest:
+      type: object
+      required: [tenant_id, name, slug, hostnames, origin_url]
+      additionalProperties: false
+      properties:
+        tenant_id:
+          type: string
+        name:
+          type: string
+          minLength: 1
+        slug:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
+        hostnames:
+          type: array
           minItems: 1
           items:
             type: string
+            description: DNS hostname. Schemes, paths, queries, and IP addresses are rejected.
         origin_url:
           type: string
           format: uri
-          description: http or https origin URL without query or fragment.
+          description: HTTP or HTTPS origin URL without query or fragment.
         metadata:
           type: object
+          additionalProperties: true
+
     UpdateAppRequest:
       type: object
+      additionalProperties: false
       properties:
         name:
           type: string
+          minLength: 1
         hostnames:
           type: array
+          minItems: 1
           items:
             type: string
         origin_url:
@@ -334,36 +697,122 @@ components:
           enum: [active, disabled]
         metadata:
           type: object
+          additionalProperties: true
+
+    Origin:
+      type: object
+      required: [name, scheme, host, port]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          examples: [primary]
+        scheme:
+          type: string
+          enum: [http, https]
+        host:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        url:
+          type: string
+          format: uri
+
+    Policy:
+      type: object
+      required: [id, tenant_id, app_id, name, mode, enabled, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        app_id:
+          type: string
+        name:
+          type: string
+        mode:
+          $ref: "#/components/schemas/Mode"
+        enabled:
+          type: boolean
+        active_version_id:
+          type: string
+        snapshot:
+          $ref: "#/components/schemas/PolicySnapshot"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
     CreatePolicyRequest:
       type: object
       required: [name]
+      additionalProperties: false
       properties:
         name:
           type: string
+          minLength: 1
         mode:
-          type: string
-          enum: [count, block]
-          default: count
+          $ref: "#/components/schemas/Mode"
         snapshot:
-          type: object
-          description: MVP policy JSON snapshot. Actions may be allow, count, block, or rate_limit.
+          $ref: "#/components/schemas/PolicySnapshot"
+
     UpdatePolicyRequest:
       type: object
       required: [expected_updated_at]
+      additionalProperties: false
       properties:
         name:
           type: string
+          minLength: 1
         mode:
-          type: string
-          enum: [count, block]
+          $ref: "#/components/schemas/Mode"
         enabled:
           type: boolean
+        snapshot:
+          $ref: "#/components/schemas/PolicySnapshot"
         expected_updated_at:
           type: string
           format: date-time
-          description: Last observed policy updated_at value.
+          description: Last observed `updated_at` value for optimistic locking.
+
+    PublishPolicyResponse:
+      type: object
+      required: [policy_id, policy_version_id, version, published_at]
+      properties:
+        policy_id:
+          type: string
+        policy_version_id:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        published_at:
+          type: string
+          format: date-time
+
+    PolicyVersion:
+      type: object
+      description: Immutable published policy version.
+      required: [id, policy_id, version, snapshot, created_at]
+      properties:
+        id:
+          type: string
+        policy_id:
+          type: string
+        version:
+          type: integer
+          minimum: 1
         snapshot:
-          type: object
+          $ref: "#/components/schemas/PolicySnapshot"
+        created_at:
+          type: string
+          format: date-time
+
     GatewayPolicy:
       type: object
       required:
@@ -377,6 +826,7 @@ components:
         - custom_rules
         - rate_limits
         - waf
+        - published_at
       properties:
         tenant_id:
           type: string
@@ -387,15 +837,255 @@ components:
         policy_version_id:
           type: string
         mode:
-          type: string
-          enum: [count, block]
+          $ref: "#/components/schemas/Mode"
         origin:
-          type: object
+          $ref: "#/components/schemas/Origin"
         ip_sets:
           type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+              description: CIDR prefix.
         custom_rules:
           type: array
+          items:
+            $ref: "#/components/schemas/Rule"
         rate_limits:
           type: array
+          items:
+            $ref: "#/components/schemas/RateLimitRule"
         waf:
+          $ref: "#/components/schemas/WAFConfig"
+        published_at:
+          type: string
+          format: date-time
+
+    PolicySnapshot:
+      type: object
+      additionalProperties: true
+      properties:
+        mode:
+          $ref: "#/components/schemas/Mode"
+        rule_groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/RuleGroup"
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/Rule"
+        ip_sets:
           type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        custom_rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/Rule"
+        rate_limits:
+          type: array
+          items:
+            $ref: "#/components/schemas/RateLimitRule"
+        waf:
+          $ref: "#/components/schemas/WAFConfig"
+
+    RuleGroup:
+      type: object
+      required: [id, name, type, enabled]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [custom, managed]
+        enabled:
+          type: boolean
+        priority:
+          type: integer
+        managed_rule_set_id:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+
+    Rule:
+      type: object
+      required: [id, name, priority, enabled, action]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        priority:
+          type: integer
+        enabled:
+          type: boolean
+        action:
+          $ref: "#/components/schemas/Action"
+        status_code:
+          type: integer
+          minimum: 100
+          maximum: 599
+        terminal_allow:
+          type: boolean
+        when:
+          type: object
+          additionalProperties: true
+          description: Custom rule condition expression.
+        expression:
+          type: object
+          additionalProperties: true
+        metadata:
+          type: object
+          additionalProperties: true
+
+    IPSet:
+      type: object
+      required: [id, name, entries]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        entries:
+          type: array
+          items:
+            type: string
+            description: CIDR prefix.
+          examples:
+            - [198.51.100.0/24, 203.0.113.10/32]
+
+    RateLimitRule:
+      type: object
+      required: [id, name, enabled, priority, key_type, limit, window_seconds, action]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        enabled:
+          type: boolean
+        priority:
+          type: integer
+        match:
+          type: object
+          additionalProperties: true
+        key_type:
+          type: string
+          enum: [ip, host, path, header, api_key_placeholder]
+        key_header:
+          type: string
+        limit:
+          type: integer
+          minimum: 1
+        window_seconds:
+          type: integer
+          minimum: 1
+        action:
+          type: string
+          enum: [count, block]
+        status_code:
+          type: integer
+          default: 429
+
+    WAFConfig:
+      type: object
+      additionalProperties: true
+      properties:
+        enabled:
+          type: boolean
+        engine:
+          type: string
+          examples: [coraza]
+        rule_engine:
+          type: string
+          enum: [On, DetectionOnly, Off]
+        request_body_limit_bytes:
+          type: integer
+          minimum: 0
+
+    AuditEvent:
+      type: object
+      required:
+        - timestamp
+        - request_id
+        - tenant_id
+        - app_id
+        - host
+        - client_ip
+        - method
+        - path
+        - action
+        - mode
+        - status
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+        tenant_id:
+          type: string
+        app_id:
+          type: string
+        policy_id:
+          type: string
+        policy_version_id:
+          type: string
+        host:
+          type: string
+        client_ip:
+          type: string
+        method:
+          type: string
+        path:
+          type: string
+        action:
+          $ref: "#/components/schemas/Action"
+        mode:
+          $ref: "#/components/schemas/Mode"
+        status:
+          type: integer
+          minimum: 100
+          maximum: 599
+        reason:
+          type: string
+        matched_rule_id:
+          type: string
+        matched_rule_name:
+          type: string
+        rule_group:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        anomaly_score:
+          type: integer
+        user_agent:
+          type: string
+        latency_ms:
+          type: integer
+          minimum: 0
+        origin_status:
+          type: integer
+          minimum: 0
+          maximum: 599
+        origin_latency_ms:
+          type: integer
+          minimum: 0
+
+    Mode:
+      type: string
+      enum: [count, block]
+
+    Action:
+      type: string
+      enum: [allow, count, block, challenge, rate_limit]

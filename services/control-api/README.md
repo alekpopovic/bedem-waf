@@ -177,7 +177,7 @@ Search event references:
 
 ```bash
 curl -s "$API/v1/events?limit=50" -H "$AUTH"
-curl -s "$API/v1/events/<event_id>" -H "$AUTH"
+curl -s "$API/v1/events/<request_id>" -H "$AUTH"
 ```
 
 ## Error Shape
